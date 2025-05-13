@@ -1,45 +1,71 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
-import { Platform } from 'react-native';
+import { Tabs } from "expo-router";
+import { HomeIcon, SearchIcon, SettingsIcon } from "lucide-react-native";
+import { ThemeProvider, useTheme } from "@/context/ThemeContext";
+import ThemedLayout from "@/components/ThemedLayout";
+import { useEffect } from "react";
+import * as SystemUI from "expo-system-ui";
+import Toast from "react-native-toast-message";
 
-import { HapticTab } from '@/components/HapticTab';
-import { IconSymbol } from '@/components/ui/IconSymbol';
-import TabBarBackground from '@/components/ui/TabBarBackground';
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/useColorScheme';
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+export default function Layout() {
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarBackground: TabBarBackground,
-        tabBarStyle: Platform.select({
-          ios: {
-            // Use a transparent background on iOS to show the blur effect
-            position: 'absolute',
-          },
-          default: {},
-        }),
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
-      />
-    </Tabs>
+    <ThemeProvider>
+      <LayoutContent />
+    </ThemeProvider>
+  );
+}
+
+function LayoutContent() {
+  const { isDarkMode } = useTheme();
+  const tabBarBackground = isDarkMode ? "#2D2D2D" : "#f0f0f0";
+  const tabBarStyle = {
+    backgroundColor: "#1C1C3A",
+    height: 60,
+    paddingBottom: 10,
+    paddingTop: 5,
+    borderTopWidth: 0,
+  };
+
+  useEffect(() => {
+    const color = isDarkMode ? "#000000" : "#fff7ed";
+    SystemUI.setBackgroundColorAsync(color);
+  }, [isDarkMode]);
+  return (
+    <>
+      <ThemedLayout>
+        <Tabs
+          screenOptions={{
+            headerShown: false,
+            tabBarHideOnKeyboard: true,
+            tabBarStyle: tabBarStyle,
+          }}
+        >
+          <Tabs.Screen
+            name="home"
+            options={{
+              tabBarIcon: ({ color, size }) => (
+                <HomeIcon color={color} size={28} />
+              ),
+            }}
+          />
+          <Tabs.Screen
+            name="friends"
+            options={{
+              tabBarIcon: ({ color, size }) => (
+                <SearchIcon color={color} size={28} />
+              ),
+            }}
+          />
+          <Tabs.Screen
+            name="settings"
+            options={{
+              tabBarIcon: ({ color, size }) => (
+                <SettingsIcon color={color} size={28} />
+              ),
+            }}
+          />
+        </Tabs>
+      </ThemedLayout>
+      <Toast />
+    </>
   );
 }

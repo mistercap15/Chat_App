@@ -1,0 +1,1 @@
+export const BASE_URL = "https://2401-2401-4900-790f-8b10-5904-41ec-9660-2e40.ngrok-free.app"
