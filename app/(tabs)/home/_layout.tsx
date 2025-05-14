@@ -32,6 +32,10 @@ export default function HomeLayout() {
           name="chat"
           options={{ title: "Chat", headerShown: false }}
         />
+        <Stack.Screen
+          name="[friendId]"
+          options={{ title: "Friends Chat", headerShown: false }}
+        />
       </Stack>
     </ThemedLayout>
   );

@@ -6,11 +6,9 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Modal,
-  BackHandler,
 } from 'react-native';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import moment from 'moment';
 import { Ionicons } from '@expo/vector-icons';
 import useSocketStore from '@/store/useSocketStore';
@@ -30,8 +28,6 @@ const FriendChat = () => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
-  const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
-  const [isIntentionalNavigation, setIsIntentionalNavigation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -56,6 +52,7 @@ const FriendChat = () => {
   const { user } = useUserStore();
 
   const TYPING_TIMEOUT = 3000;
+  const DEDUPE_WINDOW = 1000; // 1 second window for deduplication
 
   // Initialize friend chat
   useEffect(() => {
@@ -138,13 +135,26 @@ const FriendChat = () => {
 
     const messageListener = ({ message, fromUserId, timestamp }: { message: string; fromUserId: string; timestamp: number }) => {
       console.log(`[${new Date().toISOString()}] FriendChat: Received message`, { fromUserId, message, timestamp });
+      if (fromUserId === userId) {
+        console.log(`[${new Date().toISOString()}] FriendChat: Ignored own message`, { message, timestamp });
+        return; // Ignore messages sent by the current user
+      }
       if (fromUserId === partnerId) {
-        setMessages((prev:any) => {
+        setMessages((prev: any) => {
+          // Deduplication: Skip if message with same text and sender exists within dedupe window
+          const recentMessages = prev.filter((msg: any) => Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW);
+          if (recentMessages.some((msg: any) => msg.text === message && msg.sender === 'friend')) {
+            console.log(`[${new Date().toISOString()}] FriendChat: Ignored duplicate message`, { message, timestamp });
+            return prev;
+          }
           const newMessage = { text: message, sender: 'friend', timestamp, seen: false };
+          console.log(`[${new Date().toISOString()}] FriendChat: Added friend message`, { message, timestamp });
           flatListRef.current?.scrollToEnd({ animated: true });
           return [...prev, newMessage];
         });
         emitMessageSeen(timestamp);
+      } else {
+        console.warn(`[${new Date().toISOString()}] FriendChat: Message ignored: from ${fromUserId}, expected partnerId ${partnerId}`);
       }
     };
 
@@ -186,7 +196,7 @@ const FriendChat = () => {
       socket.off('message_seen', messageSeenListener);
       socket.off('friend_removed', friendRemovedListener);
     };
-  }, [socket, partnerId, partnerName, emitMessageSeen]);
+  }, [socket, partnerId, partnerName, userId, emitMessageSeen]);
 
   // Handle partner typing
   useEffect(() => {
@@ -198,51 +208,10 @@ const FriendChat = () => {
     }
   }, [isPartnerTyping, setPartnerTyping]);
 
-  // Handle back navigation
-  useFocusEffect(
-    useCallback(() => {
-      const beforeRemoveListener = (e: any) => {
-        if (isIntentionalNavigation) {
-          console.log(`[${new Date().toISOString()}] FriendChat: Allowing navigation due to intentional navigation`);
-          return;
-        }
-        if (!leaveConfirmVisible) {
-          e.preventDefault();
-          setLeaveConfirmVisible(true);
-          console.log(`[${new Date().toISOString()}] FriendChat: Showing leave confirmation modal`);
-        }
-      };
-
-      const backHandler = () => {
-        if (isIntentionalNavigation) {
-          console.log(`[${new Date().toISOString()}] FriendChat: Allowing back press due to intentional navigation`);
-          return false;
-        }
-        if (!leaveConfirmVisible) {
-          setLeaveConfirmVisible(true);
-          console.log(`[${new Date().toISOString()}] FriendChat: Showing leave confirmation modal on back press`);
-          return true;
-        }
-        return false;
-      };
-
-      const unsubscribe = navigation.addListener('beforeRemove', beforeRemoveListener);
-      const backHandlerSub = BackHandler.addEventListener('hardwareBackPress', backHandler);
-
-      return () => {
-        console.log(`[${new Date().toISOString()}] FriendChat: Cleaning up navigation listeners`);
-        unsubscribe();
-        backHandlerSub.remove();
-      };
-    }, [navigation, leaveConfirmVisible, isIntentionalNavigation])
-  );
-
   const navigateToHome = () => {
     console.log(`[${new Date().toISOString()}] FriendChat: Navigating to home`);
-    setIsIntentionalNavigation(true);
     socket?.emit('leave_friend_chat', { userId, friendId });
     router.replace('/(tabs)/home');
-    setTimeout(() => setIsIntentionalNavigation(false), 500);
   };
 
   const sendMessage = async () => {
@@ -268,7 +237,7 @@ const FriendChat = () => {
 
     const timestamp = Date.now();
     const newMessage = { text: input, sender: 'user', timestamp, seen: false };
-    setMessages((prev:any) => [...prev, newMessage]);
+    setMessages((prev: any) => [...prev, newMessage]);
     setInput('');
     flatListRef.current?.scrollToEnd({ animated: true });
 
@@ -278,12 +247,6 @@ const FriendChat = () => {
         userId,
         friendId,
         message: input,
-      });
-      socket.emit('send_message', {
-        toUserId: friendId,
-        message: input,
-        fromUserId: userId,
-        timestamp,
       });
       console.log(`[${new Date().toISOString()}] FriendChat: Message sent successfully`, { friendId, timestamp });
     } catch (error: any) {
@@ -351,7 +314,7 @@ const FriendChat = () => {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View className="flex-1 bg-[#1C1C3A]">
         <View className="flex-row items-center justify-between px-4 pt-5 pb-4 border-b border-b-gray-700 bg-[#1C1C3A] z-10">
-          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)}>
+          <TouchableOpacity onPress={navigateToHome}>
             <Ionicons name="chevron-back" size={28} color="white" />
           </TouchableOpacity>
           <Text className="text-white text-lg font-semibold">
@@ -396,39 +359,6 @@ const FriendChat = () => {
           </TouchableOpacity>
         </View>
       </View>
-
-      <Modal
-        visible={leaveConfirmVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLeaveConfirmVisible(false)}
-      >
-        <View className="flex-1 justify-center items-center bg-black/60 px-6">
-          <View className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <Text className="text-lg font-semibold text-gray-800 mb-3">Leave Chat?</Text>
-            <Text className="text-gray-700 mb-5">
-              You will return to the home screen. Are you sure?
-            </Text>
-            <View className="flex-row justify-end space-x-3">
-              <TouchableOpacity
-                onPress={() => {
-                  console.log(`[${new Date().toISOString()}] FriendChat: Leave modal cancelled`);
-                  setLeaveConfirmVisible(false);
-                }}
-                className="bg-gray-300 px-4 py-2 rounded-xl"
-              >
-                <Text className="text-gray-800">Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={navigateToHome}
-                className="bg-red-500 px-4 py-2 rounded-xl"
-              >
-                <Text className="text-white font-semibold">Leave</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </KeyboardAvoidingView>
   );
 };

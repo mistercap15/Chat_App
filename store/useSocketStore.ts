@@ -4,6 +4,7 @@ import useUserStore from './useUserStore';
 import { BASE_URL } from '@/utils/constants';
 import Toast from 'react-native-toast-message';
 import { AppState, AppStateStatus } from 'react-native';
+import api from '@/utils/api';
 
 interface FriendRequest {
   fromUserId: string;
@@ -30,13 +31,31 @@ interface SocketStore {
   setPartnerTyping: (isTyping: boolean) => void;
   emitTyping: () => void;
   emitMessageSeen: (timestamp: number) => void;
-  sendFriendRequest: () => void;
   resetState: () => void;
 }
 
 const useSocketStore = create<SocketStore>((set, get) => {
   const log = (message: string, data?: any) => {
     console.log(`[${new Date().toISOString()}] SocketStore: ${message}`, data || '');
+  };
+
+  const fetchPendingFriendRequests = async (userId: string) => {
+    try {
+      const response = await api.get(`/api/users/pending-friend-requests/${userId}`);
+      const { friendRequests } = response.data;
+      log('Fetched pending friend requests', { userId, requestCount: friendRequests.length });
+      if (friendRequests.length > 0) {
+        // Set the latest friend request
+        set({ friendRequest: friendRequests[friendRequests.length - 1] });
+      }
+    } catch (error: any) {
+      log('Error fetching pending friend requests', { userId, error: error.message });
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to fetch pending friend requests.',
+      });
+    }
   };
 
   const connectSocket = (userId: string) => {
@@ -72,6 +91,14 @@ const useSocketStore = create<SocketStore>((set, get) => {
     newSocket.on('connect', () => {
       log('Socket connected successfully', { userId, socketId: newSocket.id });
       set({ socket: newSocket, connectionStatus: 'connected' });
+      // Emit set_username to join the userId room
+      newSocket.emit('set_username', {
+        userId,
+        username: user?.user_name || 'Anonymous',
+      });
+      log('Emitted set_username', { userId, username: user?.user_name || 'Anonymous' });
+      // Fetch pending friend requests
+      fetchPendingFriendRequests(userId);
       // Rejoin room if partnerId exists
       const { partnerId, userId: currentUserId } = get();
       if (partnerId && currentUserId) {
@@ -81,12 +108,19 @@ const useSocketStore = create<SocketStore>((set, get) => {
       }
     });
 
-    newSocket.on('reconnect', (attempt:any) => {
+    newSocket.on('reconnect', (attempt: any) => {
       log('Socket reconnected', { userId, attempt });
       set({ connectionStatus: 'connected' });
+      // Re-emit set_username on reconnect
+      newSocket.emit('set_username', {
+        userId,
+        username: user?.user_name || 'Anonymous',
+      });
+      log('Emitted set_username on reconnect', { userId, username: user?.user_name || 'Anonymous' });
+      fetchPendingFriendRequests(userId);
     });
 
-    newSocket.on('reconnect_attempt', (attempt:any) => {
+    newSocket.on('reconnect_attempt', (attempt: any) => {
       log('Socket reconnect attempt', { userId, attempt });
     });
 
@@ -154,7 +188,6 @@ const useSocketStore = create<SocketStore>((set, get) => {
     set({ socket: newSocket, userId });
   };
 
-  // Handle AppState changes
   const handleAppStateChange = (nextAppState: AppStateStatus) => {
     const { socket, userId, partnerId } = get();
     log('AppState changed', { nextAppState, userId, partnerId });
@@ -168,6 +201,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
         socket.emit('join_room', { roomId, userId });
         log('Rejoined room after foreground', { roomId, userId });
       }
+      fetchPendingFriendRequests(userId);
     }
   };
 
@@ -256,18 +290,6 @@ const useSocketStore = create<SocketStore>((set, get) => {
       log('Emitting message seen', { userId, partnerId, timestamp });
       if (socket?.connected && partnerId && userId) {
         socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp });
-      }
-    },
-    sendFriendRequest: () => {
-      const { socket, userId, partnerId, username } = get();
-      log('Sending friend request', { userId, partnerId, username });
-      if (socket?.connected && userId && partnerId && username) {
-        socket.emit('send_friend_request', {
-          toUserId: partnerId,
-          fromUserId: userId,
-          fromUsername: username,
-        });
-        log('Friend request emitted', { userId, partnerId });
       }
     },
     resetState: () => {
