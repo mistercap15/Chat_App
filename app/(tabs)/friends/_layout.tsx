@@ -26,6 +26,10 @@ export default function HomeLayout() {
           name="index"
           options={{ title: "Friends", headerShown: false }}
         />
+         <Stack.Screen
+          name="[friendId]"
+          options={{ title: "Friends", headerShown: false }}
+        />
       </Stack>
     </ThemedLayout>
   );
