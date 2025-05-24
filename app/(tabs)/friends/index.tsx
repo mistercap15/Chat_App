@@ -94,7 +94,7 @@ const Friends = () => {
     console.log(`[${new Date().toISOString()}] Friends: Starting friend chat`, { friendId: friend._id, friendName: friend.user_name });
     startFriendChat(friend._id, () => {
       router.push({
-        pathname: '/(tabs)/home/[friendId]' as const, // Use dynamic route
+        pathname: '/(tabs)/friends/[friendId]' as const, // Use dynamic route
         params: { friendId: friend._id, friendName: friend.user_name },
       });
       console.log(`[${new Date().toISOString()}] Friends: Navigated to friend chat`, { friendId: friend._id });

@@ -49,7 +49,7 @@ const Home: React.FC = () => {
       log('Starting search on connection', { connectionStatus });
       startSearching(() => {
         log('Match found, navigating to chat');
-        router.push('/chat');
+        router.push('/(tabs)/home/chat');
       });
     }
   }, [isSearching, connectionStatus, startSearching, router]);
@@ -94,7 +94,7 @@ const Home: React.FC = () => {
       log('Starting search', { userId });
       startSearching(() => {
         log('Match found, navigating to chat');
-        router.push('/chat');
+        router.push('/(tabs)/home/chat');
       });
     }
   };
