@@ -24,6 +24,7 @@ interface Message {
   sender: 'user' | 'partner';
   timestamp: number;
   seen: boolean;
+  type?: 'friendRequestSent' | 'friendRequestReceived'; // For friend request messages
 }
 
 const Chat = () => {
@@ -32,10 +33,11 @@ const Chat = () => {
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
   const [partnerLeftVisible, setPartnerLeftVisible] = useState(false);
-  const [friendRequestModalVisible, setFriendRequestModalVisible] = useState(false);
   const [isIntentionalNavigation, setIsIntentionalNavigation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState<number | null>(null);
+  const [partnerBio, setPartnerBio] = useState<string>(''); // State for partner's bio
+  const [hasSentFriendRequest, setHasSentFriendRequest] = useState(false); // Track if user sent a friend request
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const isChatInitialized = useRef(false);
@@ -60,6 +62,31 @@ const Chat = () => {
   const TYPING_TIMEOUT = 3000;
   const DISCONNECT_GRACE_PERIOD = 60000; // 1 minute
   const DEDUPE_WINDOW = 1000; // 1 second window for deduplication
+
+  // Fetch partner's bio
+  useEffect(() => {
+    const fetchPartnerBio = async () => {
+      if (!partnerId) {
+        console.log(`[${new Date().toISOString()}] Chat: Cannot fetch bio: missing partnerId`, { partnerId });
+        return;
+      }
+      try {
+        const response = await api.get(`/api/users/${partnerId}`);
+        setPartnerBio(response.data.bio || 'No bio available.');
+        console.log(`[${new Date().toISOString()}] Chat: Partner bio fetched`, { partnerId, bio: response.data.bio });
+      } catch (error: any) {
+        console.error(`[${new Date().toISOString()}] Chat: Error fetching partner bio`, error.message);
+        setPartnerBio('No bio available.');
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Failed to load partner bio.',
+        });
+      }
+    };
+
+    fetchPartnerBio();
+  }, [partnerId]);
 
   // Initialize random chat and join room
   useEffect(() => {
@@ -131,25 +158,36 @@ const Chat = () => {
       }
     };
 
+    const friendRequestListener = ({ fromUserId, fromUsername }: { fromUserId: string; fromUsername: string }) => {
+      console.log(`[${new Date().toISOString()}] Chat: Friend request received`, { fromUserId, fromUsername });
+      if (fromUserId === partnerId) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            text: `Friend request received from ${fromUsername || 'Anonymous'}`,
+            sender: 'partner',
+            timestamp: Date.now(),
+            seen: false,
+            type: 'friendRequestReceived',
+          },
+        ]);
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }
+    };
+
     socket.on('receive_message', messageListener);
     socket.on('partner_disconnected', partnerDisconnectedListener);
     socket.on('message_seen', messageSeenListener);
+    socket.on('friend_request_received', friendRequestListener);
 
     return () => {
       console.log(`[${new Date().toISOString()}] Chat: Cleaning up socket listeners`);
       socket.off('receive_message', messageListener);
       socket.off('partner_disconnected', partnerDisconnectedListener);
       socket.off('message_seen', messageSeenListener);
+      socket.off('friend_request_received', friendRequestListener);
     };
   }, [socket, partnerId, userId, emitMessageSeen, lastDisconnectTime]);
-
-  // Handle friend request modal
-  useEffect(() => {
-    if (friendRequest) {
-      console.log(`[${new Date().toISOString()}] Chat: Showing friend request modal`, { fromUserId: friendRequest.fromUserId });
-      setFriendRequestModalVisible(true);
-    }
-  }, [friendRequest]);
 
   // Handle partner typing timeout
   useEffect(() => {
@@ -199,6 +237,25 @@ const Chat = () => {
       };
     }, [navigation, leaveConfirmVisible, partnerLeftVisible, isIntentionalNavigation])
   );
+
+  // Add handleTyping function to emit typing events
+  const handleTyping = useCallback(() => {
+    if (!socket?.connected || !partnerId || !userId || !isChatInitialized.current) {
+      console.log(`[${new Date().toISOString()}] Chat: Cannot emit typing: invalid state`, { socketConnected: socket?.connected, partnerId, userId, isChatInitialized: isChatInitialized.current });
+      return;
+    }
+
+    const currentTime = Date.now();
+    if (!lastTypingTime || currentTime - lastTypingTime > 1000) {
+      emitTyping();
+      setLastTypingTime(currentTime);
+      console.log(`[${new Date().toISOString()}] Chat: Emitted typing event`);
+    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      setLastTypingTime(null);
+    }, TYPING_TIMEOUT);
+  }, [socket, partnerId, userId, lastTypingTime, emitTyping]);
 
   const navigateToHome = () => {
     console.log(`[${new Date().toISOString()}] Chat: Navigating to home`);
@@ -268,24 +325,6 @@ const Chat = () => {
     }
   };
 
-  const handleTyping = useCallback(() => {
-    if (!socket?.connected || !partnerId || !userId || !isChatInitialized.current) {
-      console.log(`[${new Date().toISOString()}] Chat: Cannot emit typing: invalid state`, { socketConnected: socket?.connected, partnerId, userId, isChatInitialized: isChatInitialized.current });
-      return;
-    }
-
-    const currentTime = Date.now();
-    if (!lastTypingTime || currentTime - lastTypingTime > 1000) {
-      emitTyping();
-      setLastTypingTime(currentTime);
-      console.log(`[${new Date().toISOString()}] Chat: Emitted typing event`);
-    }
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      setLastTypingTime(null);
-    }, TYPING_TIMEOUT);
-  }, [socket, partnerId, userId, lastTypingTime, emitTyping]);
-
   const handleSendFriendRequest = async () => {
     if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
       console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for friend request`, { userId, partnerId });
@@ -297,9 +336,31 @@ const Chat = () => {
       return;
     }
 
+    if (hasSentFriendRequest) {
+      console.log(`[${new Date().toISOString()}] Chat: Friend request already sent`);
+      Toast.show({
+        type: 'info',
+        text1: 'Request Already Sent',
+        text2: 'You have already sent a friend request.',
+      });
+      return;
+    }
+
     console.log(`[${new Date().toISOString()}] Chat: Sending friend request from ${userId} to ${partnerId}`);
     try {
       await api.post('/api/users/send-friend-request', { userId, friendId: partnerId });
+      setHasSentFriendRequest(true);
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: 'You have sent a friend request.',
+          sender: 'user',
+          timestamp: Date.now(),
+          seen: false,
+          type: 'friendRequestSent',
+        },
+      ]);
+      flatListRef.current?.scrollToEnd({ animated: true });
       Toast.show({
         type: 'success',
         text1: 'Request Sent',
@@ -321,13 +382,13 @@ const Chat = () => {
     }
   };
 
-  const handleAcceptFriendRequest = async () => {
-    if (!userId || !friendRequest?.fromUserId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(friendRequest.fromUserId)) {
-      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or friend ID for accepting friend request`, { userId, fromUserId: friendRequest?.fromUserId });
+  const handleAcceptFriendRequest = async (timestamp: number) => {
+    if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
+      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for accepting friend request`, { userId, partnerId });
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Invalid user or friend ID.',
+        text2: 'Invalid user or partner ID.',
       });
       return;
     }
@@ -335,29 +396,37 @@ const Chat = () => {
     try {
       await api.post('/api/users/accept-friend-request', {
         userId,
-        friendId: friendRequest.fromUserId,
+        friendId: partnerId,
       });
 
       if (user) {
         const updatedUser = {
           ...user,
-          friends: user.friends ? [...user.friends, friendRequest.fromUserId] : [friendRequest.fromUserId],
+          friends: user.friends ? [...user.friends, partnerId] : [partnerId],
         };
         setUser(updatedUser);
-        console.log(`[${new Date().toISOString()}] Chat: Friend added to user`, { friendId: friendRequest.fromUserId });
+        console.log(`[${new Date().toISOString()}] Chat: Friend added to user`, { friendId: partnerId });
       }
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.timestamp === timestamp
+            ? { ...msg, text: `${partnerName || 'Anonymous'} is now your friend!` }
+            : msg
+        )
+      );
 
       Toast.show({
         type: 'success',
         text1: 'Friend Added',
-        text2: `${friendRequest.fromUsername} is now your friend!`,
+        text2: `${partnerName || 'Anonymous'} is now your friend!`,
       });
 
       router.push({
         pathname: '/(tabs)/friends/[friendId]',
-        params: { friendId: friendRequest.fromUserId, friendName: friendRequest.fromUsername },
+        params: { friendId: partnerId, friendName: partnerName },
       });
-      console.log(`[${new Date().toISOString()}] Chat: Navigated to friend chat`, { friendId: friendRequest.fromUserId });
+      console.log(`[${new Date().toISOString()}] Chat: Navigated to friend chat`, { friendId: partnerId });
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] Chat: Error accepting friend request:`, error.message, error.stack);
       let errorMessage = 'Failed to accept friend request.';
@@ -371,18 +440,16 @@ const Chat = () => {
         text1: 'Error',
         text2: errorMessage,
       });
-    } finally {
-      setFriendRequestModalVisible(false);
     }
   };
 
-  const handleRejectFriendRequest = async () => {
-    if (!userId || !friendRequest?.fromUserId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(friendRequest.fromUserId)) {
-      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or friend ID for rejecting friend request`, { userId, fromUserId: friendRequest?.fromUserId });
+  const handleRejectFriendRequest = async (timestamp: number) => {
+    if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
+      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for rejecting friend request`, { userId, partnerId });
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Invalid user or friend ID.',
+        text2: 'Invalid user or partner ID.',
       });
       return;
     }
@@ -390,12 +457,19 @@ const Chat = () => {
     try {
       await api.post('/api/users/reject-friend-request', {
         userId,
-        friendId: friendRequest.fromUserId,
+        friendId: partnerId,
       });
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.timestamp === timestamp
+            ? { ...msg, text: 'Friend request rejected.' }
+            : msg
+        )
+      );
       Toast.show({
         type: 'success',
         text1: 'Request Rejected',
-        text2: `Friend request from ${friendRequest.fromUsername} rejected.`,
+        text2: `Friend request from ${partnerName || 'Anonymous'} rejected.`,
       });
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] Chat: Error rejecting friend request:`, error.message, error.stack);
@@ -410,8 +484,6 @@ const Chat = () => {
         text1: 'Error',
         text2: errorMessage,
       });
-    } finally {
-      setFriendRequestModalVisible(false);
     }
   };
 
@@ -427,24 +499,56 @@ const Chat = () => {
     const isLast = index === messages.length - 1;
     const senderLabel = isUser ? '' : partnerName || 'Anonymous';
 
+    if (item.type === 'friendRequestSent') {
+      return (
+        <View className="my-2 self-center bg-indigo-600/20 rounded-lg px-4 py-2">
+          <Text className="text-indigo-200 text-sm">{item.text}</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'friendRequestReceived') {
+      return (
+        <View className="my-2 self-center bg-gray-600/20 rounded-lg px-4 py-2">
+          <Text className="text-gray-200 text-sm mb-2">{item.text}</Text>
+          <View className="flex-row justify-center space-x-3">
+            <TouchableOpacity
+              onPress={() => handleAcceptFriendRequest(item.timestamp)}
+              className="bg-indigo-500 px-3 py-1 rounded-lg"
+            >
+              <Text className="text-white text-sm font-semibold">Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => handleRejectFriendRequest(item.timestamp)}
+              className="bg-red-500 px-3 py-1 rounded-lg"
+            >
+              <Text className="text-white text-sm font-semibold">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
     return (
-      <View className={`my-1 max-w-[80%] ${isUser ? 'self-end' : 'self-start'}`}>
+      <View className={`my-2 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
         <View
-          className={`px-4 py-2 rounded-2xl ${isUser ? 'bg-indigo-500' : 'bg-gray-700'} shadow-md`}
+          className={`px-4 py-3 rounded-2xl shadow-sm ${
+            isUser ? 'bg-indigo-500' : 'bg-gray-700'
+          }`}
         >
           {!isUser && (
-            <Text className="text-white text-sm font-bold mb-1">{senderLabel}</Text>
+            <Text className="text-white text-sm font-semibold mb-1">{senderLabel}</Text>
           )}
-          <Text className="text-white text-base">{item.text}</Text>
+          <Text className="text-white text-base leading-5">{item.text}</Text>
         </View>
-        <View className="flex-row justify-between">
+        <View className="flex-row justify-between mt-1">
           {isLast && (
-            <Text className="text-xs text-gray-400 mt-1 ml-1">
+            <Text className="text-xs text-gray-400">
               {moment(item.timestamp).format('h:mm A')}
             </Text>
           )}
           {isUser && item.seen && (
-            <Text className="text-xs text-green-400 mt-1 mr-1">Seen</Text>
+            <Text className="text-xs text-green-400">Seen</Text>
           )}
         </View>
       </View>
@@ -453,15 +557,25 @@ const Chat = () => {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View className="flex-1 bg-[#1C1C3A]">
-        <View className="flex-row items-center justify-between px-4 pt-5 pb-4 border-b border-gray-700 bg-[#1C1C3A] z-10">
+      <View className="flex-1 bg-[#141432]">
+        <View className="flex-row items-center justify-between px-4 pt-5 pb-3 border-b border-gray-800 bg-[#141432] z-10">
           <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)}>
             <Ionicons name="chevron-back" size={28} color="white" />
           </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">
-            Chatting with {partnerName || 'Anonymous'} {connectionStatus === 'disconnected' ? '(Reconnecting...)' : ''}
-          </Text>
+          <View className="flex-1 items-center">
+            <Text className="text-white text-lg font-semibold">
+              {partnerName || 'Anonymous'}
+            </Text>
+            {connectionStatus === 'disconnected' && (
+              <Text className="text-gray-400 text-xs mt-1">Reconnecting...</Text>
+            )}
+          </View>
           <View style={{ width: 28 }} />
+        </View>
+
+        <View className="px-4 py-3 bg-[#1A1A38] border-b border-gray-800">
+          <Text className="text-white text-sm font-semibold">About {partnerName || 'Anonymous'}</Text>
+          <Text className="text-gray-300 text-sm mt-1">{partnerBio}</Text>
         </View>
 
         <FlatList
@@ -469,23 +583,25 @@ const Chat = () => {
           data={messages}
           keyExtractor={(item, index) => `${item.timestamp}-${index}`}
           renderItem={renderMessage}
-          className="flex-1 px-4 pt-2"
+          className="flex-1 px-4 pt-3"
           contentContainerStyle={{ paddingBottom: 20 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
-        {isPartnerTyping && <Text className="text-gray-400 text-sm px-4 pb-1">Typing...</Text>}
+        {isPartnerTyping && (
+          <Text className="text-gray-400 text-sm px-4 pb-2">Typing...</Text>
+        )}
 
-        <View className="flex-row items-center bg-gray-800 rounded-xl p-2 mx-4 mb-4">
+        <View className="flex-row items-center bg-[#1A1A38] rounded-full p-3 mx-4 mb-4 shadow-sm">
           <TouchableOpacity
             onPress={handleSendFriendRequest}
-            disabled={!partnerId || connectionStatus === 'disconnected'}
+            disabled={!partnerId || connectionStatus === 'disconnected' || hasSentFriendRequest}
             className="p-2"
           >
             <AntDesign
               name="adduser"
               size={24}
-              color={partnerId && connectionStatus !== 'disconnected' ? 'white' : 'gray'}
+              color={partnerId && connectionStatus !== 'disconnected' && !hasSentFriendRequest ? '#5B2EFF' : 'gray'}
             />
           </TouchableOpacity>
           <TextInput
@@ -494,9 +610,9 @@ const Chat = () => {
               setInput(text);
               handleTyping();
             }}
-            placeholder="Type your message"
-            placeholderTextColor="#ccc"
-            className="flex-1 text-white px-3"
+            placeholder="Type a message..."
+            placeholderTextColor="#9CA3AF"
+            className="flex-1 text-white px-3 text-base"
             editable={connectionStatus !== 'disconnected'}
           />
           <TouchableOpacity
@@ -505,9 +621,11 @@ const Chat = () => {
               sendMessage();
             }}
             disabled={isSending || connectionStatus === 'disconnected'}
-            className={`ml-2 bg-indigo-500 px-4 py-2 rounded-xl ${isSending || connectionStatus === 'disconnected' ? 'opacity-50' : ''}`}
+            className={`ml-2 bg-indigo-500 px-4 py-2 rounded-full ${
+              isSending || connectionStatus === 'disconnected' ? 'opacity-50' : ''
+            }`}
           >
-            <Text className="text-white font-semibold">Send</Text>
+            <Text className="text-white font-semibold text-base">Send</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -519,9 +637,9 @@ const Chat = () => {
         onRequestClose={() => setLeaveConfirmVisible(false)}
       >
         <View className="flex-1 justify-center items-center bg-black/60 px-6">
-          <View className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <Text className="text-lg font-semibold text-gray-800 mb-3">End Chat?</Text>
-            <Text className="text-gray-700 mb-5">
+          <View className="bg-[#1A1A38] rounded-2xl p-6 w-full max-w-md shadow-lg">
+            <Text className="text-white text-lg font-semibold mb-3">End Chat?</Text>
+            <Text className="text-gray-300 mb-5">
               Leaving will disconnect you from this chat. Are you sure?
             </Text>
             <View className="flex-row justify-end space-x-3">
@@ -530,15 +648,15 @@ const Chat = () => {
                   console.log(`[${new Date().toISOString()}] Chat: Leave modal cancelled`);
                   setLeaveConfirmVisible(false);
                 }}
-                className="bg-gray-300 px-4 py-2 rounded-xl"
+                className="bg-gray-600 px-4 py-2 rounded-lg"
               >
-                <Text className="text-gray-800">Cancel</Text>
+                <Text className="text-white font-medium">Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleLeaveChat}
-                className="bg-red-500 px-4 py-2 rounded-xl"
+                className="bg-red-500 px-4 py-2 rounded-lg"
               >
-                <Text className="text-white font-semibold">Leave</Text>
+                <Text className="text-white font-medium">Leave</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -552,48 +670,15 @@ const Chat = () => {
         onRequestClose={navigateToHome}
       >
         <View className="flex-1 justify-center items-center bg-black/60 px-6">
-          <View className="bg-white rounded-2xl p-6 w-full max-w-md items-center">
+          <View className="bg-[#1A1A38] rounded-2xl p-6 w-full max-w-md items-center shadow-lg">
             <Ionicons name="close-circle" size={64} color="#EF4444" className="mb-3" />
-            <Text className="text-lg font-semibold text-gray-800 mb-2">Chat Ended</Text>
-            <Text className="text-gray-700 text-center mb-5">
+            <Text className="text-white text-lg font-semibold mb-2">Chat Ended</Text>
+            <Text className="text-gray-300 text-center mb-5">
               Your partner has left the chat.
             </Text>
-            <TouchableOpacity onPress={navigateToHome} className="bg-indigo-600 px-4 py-2 rounded-xl">
+            <TouchableOpacity onPress={navigateToHome} className="bg-indigo-500 px-4 py-2 rounded-lg">
               <Text className="text-white font-semibold">OK</Text>
             </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={friendRequestModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          console.log(`[${new Date().toISOString()}] Chat: Friend request modal closed`);
-          setFriendRequestModalVisible(false);
-        }}
-      >
-        <View className="flex-1 justify-center items-center bg-black/60 px-6">
-          <View className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <Text className="text-lg font-semibold text-gray-800 mb-3">Friend Request</Text>
-            <Text className="text-gray-700 mb-5">
-              {friendRequest?.fromUsername || 'Anonymous'} wants to be your friend!
-            </Text>
-            <View className="flex-row justify-end space-x-3">
-              <TouchableOpacity
-                onPress={handleRejectFriendRequest}
-                className="bg-red-500 px-4 py-2 rounded-xl"
-              >
-                <Text className="text-white font-semibold">Reject</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleAcceptFriendRequest}
-                className="bg-indigo-600 px-4 py-2 rounded-xl"
-              >
-                <Text className="text-white font-semibold">Accept</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
       </Modal>
