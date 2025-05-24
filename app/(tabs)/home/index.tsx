@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import useSocketStore from '@/store/useSocketStore';
@@ -16,6 +16,7 @@ const Home: React.FC = () => {
     console.log(`[${new Date().toISOString()}] Home: ${message}`, data || '');
   };
 
+  // Handle socket connection and cleanup on focus/unfocus
   useFocusEffect(
     useCallback(() => {
       log('Home screen focused', { userId: user?._id, isRegistered: isRegistered() });
@@ -34,12 +35,24 @@ const Home: React.FC = () => {
 
       log('Connecting socket', { userId });
       connectSocket(userId);
+
       return () => {
         log('Home screen unfocused, stopping search');
         stopSearching();
       };
     }, [user, isRegistered, stopSearching, connectSocket])
   );
+
+  // Navigate to chat when a match is found
+  useEffect(() => {
+    if (isSearching) {
+      log('Starting search on connection', { connectionStatus });
+      startSearching(() => {
+        log('Match found, navigating to chat');
+        router.push('/chat');
+      });
+    }
+  }, [isSearching, connectionStatus, startSearching, router]);
 
   const handleSearch = () => {
     log('Search button pressed', { isSearching, connectionStatus });
@@ -64,30 +77,26 @@ const Home: React.FC = () => {
       return;
     }
 
-    if (connectionStatus !== 'connected') {
+    if (connectionStatus === 'disconnected') {
       log('Socket not connected, attempting to connect', { userId });
       connectSocket(userId);
       Toast.show({ type: 'info', text1: 'Connecting', text2: 'Please wait...' });
-      setTimeout(() => {
-        if (useSocketStore.getState().connectionStatus === 'connected') {
-          log('Socket connected, starting search', { userId });
-          startSearching(() => {
-            log('Match found, navigating to chat');
-            router.push('/(tabs)/home/chat');
-          });
-        } else {
-          log('Failed to connect to socket');
-          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
-        }
-      }, 1000);
       return;
     }
 
-    log('Starting search', { userId });
-    startSearching(() => {
-      log('Match found, navigating to chat');
-      router.push('/(tabs)/home/chat');
-    });
+    if (connectionStatus === 'connecting') {
+      log('Socket is connecting, showing toast', { userId });
+      Toast.show({ type: 'info', text1: 'Connecting', text2: 'Please wait for connection...' });
+      return;
+    }
+
+    if (!isSearching) {
+      log('Starting search', { userId });
+      startSearching(() => {
+        log('Match found, navigating to chat');
+        router.push('/chat');
+      });
+    }
   };
 
   const handleStopSearch = () => {
@@ -129,8 +138,8 @@ const Home: React.FC = () => {
         ) : (
           <TouchableOpacity
             onPress={handleSearch}
-            disabled={isSearching}
-            className="bg-indigo-600 px-10 py-4 rounded-2xl shadow-lg active:scale-95"
+            disabled={isSearching || connectionStatus === 'connecting'}
+            className={`bg-indigo-600 px-10 py-4 rounded-2xl shadow-lg active:scale-95 ${isSearching || connectionStatus === 'connecting' ? 'opacity-50' : ''}`}
           >
             <Text className="text-white text-lg font-bold tracking-wider">START SEARCHING</Text>
           </TouchableOpacity>

@@ -354,7 +354,7 @@ const Chat = () => {
       });
 
       router.push({
-        pathname: '/(tabs)/home/[friendId]',
+        pathname: '/[friendId]',
         params: { friendId: friendRequest.fromUserId, friendName: friendRequest.fromUsername },
       });
       console.log(`[${new Date().toISOString()}] Chat: Navigated to friend chat`, { friendId: friendRequest.fromUserId });
