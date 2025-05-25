@@ -1,16 +1,25 @@
 import { useTheme } from "@/context/ThemeContext";
-import { Stack } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
+import { Stack, useRouter } from "expo-router";
 import ThemedLayout from "@/components/ThemedLayout";
-import { KeyboardProvider } from 'react-native-keyboard-controller';
+import useSocketStore from "@/store/useSocketStore";
+import { useEffect } from "react";
 
 export default function HomeLayout() {
   const { isDarkMode } = useTheme();
+  const { randomPartnerId } = useSocketStore();
+  const router = useRouter();
 
   const headerBg = isDarkMode ? "#1f2937" : "#fff7ed";
   const headerText = isDarkMode ? "#facc15" : "#92400e";
   const bgColor = isDarkMode ? "#000" : "#fff7ed";
+
+  // Redirect to random chat only if a random match is found (randomPartnerId exists)
+  useEffect(() => {
+    if (randomPartnerId) {
+      console.log(`[${new Date().toISOString()}] HomeLayout: Active random chat detected, redirecting to chat`, { randomPartnerId });
+      router.replace('/(tabs)/home/chat');
+    }
+  }, [randomPartnerId, router]);
 
   return (
     <ThemedLayout>
@@ -21,7 +30,8 @@ export default function HomeLayout() {
           headerTintColor: headerText,
           animation: "ios_from_right",
           headerTitleAlign: "center",
-          contentStyle: { backgroundColor: bgColor }, 
+          contentStyle: { backgroundColor: bgColor },
+          gestureEnabled: false,
         }}
       >
         <Stack.Screen
@@ -30,11 +40,11 @@ export default function HomeLayout() {
         />
         <Stack.Screen
           name="chat"
-          options={{ title: "Chat", headerShown: false }}
-        />
-        <Stack.Screen
-          name="[friendId]"
-          options={{ title: "Friends Chat", headerShown: false }}
+          options={{ 
+            title: "Chat", 
+            headerShown: false,
+            gestureEnabled: false,
+          }}
         />
       </Stack>
     </ThemedLayout>

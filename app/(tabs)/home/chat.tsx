@@ -10,9 +10,9 @@ import {
   BackHandler,
 } from 'react-native';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import moment from 'moment';
-import { Ionicons, AntDesign } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import useSocketStore from '@/store/useSocketStore';
 import useUserStore from '@/store/useUserStore';
 import { router } from 'expo-router';
@@ -24,7 +24,7 @@ interface Message {
   sender: 'user' | 'partner';
   timestamp: number;
   seen: boolean;
-  type?: 'friendRequestSent' | 'friendRequestReceived'; // For friend request messages
+  type?: 'friendRequestSent' | 'friendRequestReceived';
 }
 
 const Chat = () => {
@@ -36,88 +36,85 @@ const Chat = () => {
   const [isIntentionalNavigation, setIsIntentionalNavigation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState<number | null>(null);
-  const [partnerBio, setPartnerBio] = useState<string>(''); // State for partner's bio
-  const [hasSentFriendRequest, setHasSentFriendRequest] = useState(false); // Track if user sent a friend request
+  const [isPartnerInfoVisible, setIsPartnerInfoVisible] = useState(true);
+  const [showExtraButtons, setShowExtraButtons] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const isChatInitialized = useRef(false);
+  const isMounted = useRef(true);
 
   const {
     socket,
-    partnerId,
     userId,
-    resetState,
+    randomPartnerId,
+    randomChatType,
+    resetRandomChatState,
     username,
-    partnerName,
+    randomPartnerName,
     isPartnerTyping,
     setPartnerTyping,
     emitTyping,
     emitMessageSeen,
     friendRequest,
     connectionStatus,
+    friendRequestSent,
+    emitFriendRequestSent,
   } = useSocketStore();
 
   const { user, setUser } = useUserStore();
   const navigation = useNavigation();
+  const route = useRoute();
   const TYPING_TIMEOUT = 3000;
-  const DISCONNECT_GRACE_PERIOD = 60000; // 1 minute
-  const DEDUPE_WINDOW = 1000; // 1 second window for deduplication
+  const DISCONNECT_GRACE_PERIOD = 60000;
+  const DEDUPE_WINDOW = 1000;
 
-  // Fetch partner's bio
   useEffect(() => {
-    const fetchPartnerBio = async () => {
-      if (!partnerId) {
-        console.log(`[${new Date().toISOString()}] Chat: Cannot fetch bio: missing partnerId`, { partnerId });
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      console.log(`[${new Date().toISOString()}] Chat: Component unmounted`);
+    };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!randomPartnerId || !randomPartnerName || !userId || !socket?.connected || randomChatType !== 'random') {
+        console.warn(`[${new Date().toISOString()}] Chat: Random chat not initialized: missing partnerId, userId, socket, or incorrect chat type`, { randomPartnerId, userId, randomPartnerName, socketConnected: socket?.connected, randomChatType });
+        navigateToHome();
         return;
       }
-      try {
-        const response = await api.get(`/api/users/${partnerId}`);
-        setPartnerBio(response.data.bio || 'No bio available.');
-        console.log(`[${new Date().toISOString()}] Chat: Partner bio fetched`, { partnerId, bio: response.data.bio });
-      } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Chat: Error fetching partner bio`, error.message);
-        setPartnerBio('No bio available.');
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Failed to load partner bio.',
-        });
-      }
-    };
 
-    fetchPartnerBio();
-  }, [partnerId]);
-
-  // Initialize random chat and join room
-  useEffect(() => {
-    console.log(`[${new Date().toISOString()}] Chat: Initializing chat`, { userId, partnerId, partnerName, socketConnected: socket?.connected });
-    if (partnerId && partnerName && userId && socket?.connected) {
+      console.log(`[${new Date().toISOString()}] Chat: Initializing random chat`, { userId, randomPartnerId, randomPartnerName, socketConnected: socket?.connected });
       isChatInitialized.current = true;
-      const roomId = [userId, partnerId].sort().join('-');
+      const roomId = [userId, randomPartnerId].sort().join('-');
       socket.emit('join_room', { roomId, userId });
-      console.log(`[${new Date().toISOString()}] Chat: Random chat initialized for user ${userId} with partner ${partnerId} (${partnerName}), joined room ${roomId}`);
-    } else {
-      console.warn(`[${new Date().toISOString()}] Chat: Random chat not initialized: missing partnerId, userId, or socket`, { partnerId, userId, partnerName, socketConnected: socket?.connected });
-      navigateToHome();
-    }
-  }, [partnerId, partnerName, userId, socket]);
+      console.log(`[${new Date().toISOString()}] Chat: Random chat initialized for user ${userId} with partner ${randomPartnerId} (${randomPartnerName}), joined room ${roomId}`);
 
-  // Handle socket events for random chat
+      return () => {
+        console.log(`[${new Date().toISOString()}] Chat: Cleaning up on unfocus`);
+        if (isChatInitialized.current) {
+          socket?.emit('leave_chat', { toUserId: randomPartnerId });
+        }
+        isChatInitialized.current = false;
+      };
+    }, [randomPartnerId, randomPartnerName, userId, socket, randomChatType])
+  );
+
   useEffect(() => {
-    if (!socket || !isChatInitialized.current) {
-      console.log(`[${new Date().toISOString()}] Chat: Socket or chat not initialized, skipping event listeners`);
+    if (!socket || !isChatInitialized.current || randomChatType !== 'random') {
+      console.log(`[${new Date().toISOString()}] Chat: Socket or chat not initialized, or not a random chat, skipping event listeners`, { socketConnected: socket?.connected, isChatInitialized: isChatInitialized.current, randomChatType });
       return;
     }
 
     const messageListener = ({ message, fromUserId, timestamp }: { message: string; fromUserId: string; timestamp: number }) => {
-      console.log(`[${new Date().toISOString()}] Chat: Received message: from ${fromUserId}, to user ${userId}, partner ${partnerId}, message: ${message}, timestamp: ${timestamp}`);
+      if (!isMounted.current) return;
+      console.log(`[${new Date().toISOString()}] Chat: Received message: from ${fromUserId}, to user ${userId}, partner ${randomPartnerId}, message: ${message}, timestamp: ${timestamp}`);
       if (fromUserId === userId) {
         console.log(`[${new Date().toISOString()}] Chat: Ignored own message: ${message}, timestamp ${timestamp}`);
-        return; // Ignore messages sent by the current user
+        return;
       }
-      if (fromUserId === partnerId) {
+      if (fromUserId === randomPartnerId) {
         setMessages((prev): any => {
-          // Deduplication check: skip if a message with the same text and sender exists within the dedupe window
           const recentMessages = prev.filter((msg) => Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW);
           if (recentMessages.some((msg) => msg.text === message && msg.sender === 'partner')) {
             console.log(`[${new Date().toISOString()}] Chat: Ignored duplicate message: ${message}, timestamp ${timestamp}`);
@@ -128,15 +125,16 @@ const Chat = () => {
           flatListRef.current?.scrollToEnd({ animated: true });
           return [...prev, newMessage];
         });
-        emitMessageSeen(timestamp);
+        emitMessageSeen(timestamp, false);
       } else {
-        console.warn(`[${new Date().toISOString()}] Chat: Message ignored: from ${fromUserId}, expected partnerId ${partnerId}`);
+        console.warn(`[${new Date().toISOString()}] Chat: Message ignored: from ${fromUserId}, expected partnerId ${randomPartnerId}`);
       }
     };
 
     const partnerDisconnectedListener = ({ disconnectedUserId }: { disconnectedUserId: string }) => {
+      if (!isMounted.current) return;
       console.log(`[${new Date().toISOString()}] Chat: Partner disconnected event received: ${disconnectedUserId}`);
-      if (disconnectedUserId === partnerId) {
+      if (disconnectedUserId === randomPartnerId) {
         const now = Date.now();
         if (lastDisconnectTime && now - lastDisconnectTime < DISCONNECT_GRACE_PERIOD) {
           console.log(`[${new Date().toISOString()}] Chat: Ignoring partner disconnect within grace period`, { lastDisconnectTime, now });
@@ -148,8 +146,9 @@ const Chat = () => {
     };
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
-      if (fromUserId === partnerId) {
-        console.log(`[${new Date().toISOString()}] Chat: Message seen by partner: timestamp ${timestamp}`);
+      if (!isMounted.current) return;
+      console.log(`[${new Date().toISOString()}] Chat: Message seen by partner: timestamp ${timestamp}`);
+      if (fromUserId === randomPartnerId) {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.sender === 'user' && msg.timestamp === timestamp ? { ...msg, seen: true } : msg
@@ -159,12 +158,13 @@ const Chat = () => {
     };
 
     const friendRequestListener = ({ fromUserId, fromUsername }: { fromUserId: string; fromUsername: string }) => {
+      if (!isMounted.current) return;
       console.log(`[${new Date().toISOString()}] Chat: Friend request received`, { fromUserId, fromUsername });
-      if (fromUserId === partnerId) {
+      if (fromUserId === randomPartnerId) {
         setMessages((prev) => [
           ...prev,
           {
-            text: `Friend request received from ${fromUsername || 'Anonymous'}`,
+            text: `You have received a friend request from ${fromUsername || 'Anonymous'}`,
             sender: 'partner',
             timestamp: Date.now(),
             seen: false,
@@ -175,10 +175,43 @@ const Chat = () => {
       }
     };
 
+    const friendRequestAcceptedListener = ({ userId: acceptorId, friendId }: { userId: string; friendId: string }) => {
+      if (!isMounted.current) return;
+      console.log(`[${new Date().toISOString()}] Chat: Friend request accepted`, { acceptorId, friendId });
+      if ((acceptorId === userId && friendId === randomPartnerId) || (acceptorId === randomPartnerId && friendId === userId)) {
+        Toast.show({
+          type: 'success',
+          text1: 'Friend Added',
+          text2: `${randomPartnerName || 'Anonymous'} is now your friend!`,
+        });
+        navigateToFriends();
+      }
+    };
+
+    const friendRequestStatusListener = ({ fromUserId, toUserId, fromUsername, status }: { fromUserId: string; toUserId: string; fromUsername: string; status: string }) => {
+      if (!isMounted.current) return;
+      console.log(`[${new Date().toISOString()}] Chat: Friend request status updated`, { fromUserId, toUserId, status });
+      if (status === 'sent' && (fromUserId === userId || fromUserId === randomPartnerId) && (toUserId === randomPartnerId || toUserId === userId)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            text: `${fromUsername || 'Anonymous'} has sent a friend request.`,
+            sender: fromUserId === userId ? 'user' : 'partner',
+            timestamp: Date.now(),
+            seen: false,
+            type: 'friendRequestSent',
+          },
+        ]);
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }
+    };
+
     socket.on('receive_message', messageListener);
     socket.on('partner_disconnected', partnerDisconnectedListener);
     socket.on('message_seen', messageSeenListener);
     socket.on('friend_request_received', friendRequestListener);
+    socket.on('friend_request_accepted', friendRequestAcceptedListener);
+    socket.on('friend_request_status', friendRequestStatusListener);
 
     return () => {
       console.log(`[${new Date().toISOString()}] Chat: Cleaning up socket listeners`);
@@ -186,42 +219,32 @@ const Chat = () => {
       socket.off('partner_disconnected', partnerDisconnectedListener);
       socket.off('message_seen', messageSeenListener);
       socket.off('friend_request_received', friendRequestListener);
+      socket.off('friend_request_accepted', friendRequestAcceptedListener);
+      socket.off('friend_request_status', friendRequestStatusListener);
     };
-  }, [socket, partnerId, userId, emitMessageSeen, lastDisconnectTime]);
+  }, [socket, randomPartnerId, userId, randomPartnerName, randomChatType, emitMessageSeen]);
 
-  // Handle partner typing timeout
   useEffect(() => {
     if (isPartnerTyping) {
-      const timeout = setTimeout(() => {
-        setPartnerTyping(false);
-      }, TYPING_TIMEOUT);
+      const timeout = setTimeout(() => setPartnerTyping(false), TYPING_TIMEOUT);
       return () => clearTimeout(timeout);
     }
   }, [isPartnerTyping, setPartnerTyping]);
 
-  // Handle back navigation
   useFocusEffect(
     useCallback(() => {
       const beforeRemoveListener = (e: any) => {
-        if (partnerLeftVisible || isIntentionalNavigation) {
-          console.log(`[${new Date().toISOString()}] Chat: Allowing navigation due to partnerLeftVisible or intentional navigation`);
-          return;
-        }
+        if (partnerLeftVisible || isIntentionalNavigation) return;
         if (!leaveConfirmVisible) {
           e.preventDefault();
           setLeaveConfirmVisible(true);
-          console.log(`[${new Date().toISOString()}] Chat: Showing leave confirmation modal`);
         }
       };
 
       const backHandler = () => {
-        if (partnerLeftVisible || isIntentionalNavigation) {
-          console.log(`[${new Date().toISOString()}] Chat: Allowing back press due to partnerLeftVisible or intentional navigation`);
-          return false;
-        }
+        if (partnerLeftVisible || isIntentionalNavigation) return false;
         if (!leaveConfirmVisible) {
           setLeaveConfirmVisible(true);
-          console.log(`[${new Date().toISOString()}] Chat: Showing leave confirmation modal on back press`);
           return true;
         }
         return false;
@@ -231,68 +254,56 @@ const Chat = () => {
       const backHandlerSub = BackHandler.addEventListener('hardwareBackPress', backHandler);
 
       return () => {
-        console.log(`[${new Date().toISOString()}] Chat: Cleaning up navigation listeners`);
         unsubscribe();
         backHandlerSub.remove();
       };
     }, [navigation, leaveConfirmVisible, partnerLeftVisible, isIntentionalNavigation])
   );
 
-  // Add handleTyping function to emit typing events
   const handleTyping = useCallback(() => {
-    if (!socket?.connected || !partnerId || !userId || !isChatInitialized.current) {
-      console.log(`[${new Date().toISOString()}] Chat: Cannot emit typing: invalid state`, { socketConnected: socket?.connected, partnerId, userId, isChatInitialized: isChatInitialized.current });
-      return;
-    }
-
+    if (!socket?.connected || !randomPartnerId || !userId || !isChatInitialized.current) return;
     const currentTime = Date.now();
     if (!lastTypingTime || currentTime - lastTypingTime > 1000) {
-      emitTyping();
+      emitTyping(false);
       setLastTypingTime(currentTime);
-      console.log(`[${new Date().toISOString()}] Chat: Emitted typing event`);
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      setLastTypingTime(null);
-    }, TYPING_TIMEOUT);
-  }, [socket, partnerId, userId, lastTypingTime, emitTyping]);
+    typingTimeoutRef.current = setTimeout(() => setLastTypingTime(null), TYPING_TIMEOUT);
+  }, [socket, randomPartnerId, userId, lastTypingTime, emitTyping]);
 
   const navigateToHome = () => {
+    if (!isMounted.current) return;
     console.log(`[${new Date().toISOString()}] Chat: Navigating to home`);
     setIsIntentionalNavigation(true);
     setMessages([]);
-    resetState();
+    resetRandomChatState();
     router.replace('/(tabs)/home');
     setTimeout(() => setIsIntentionalNavigation(false), 500);
   };
 
+  const navigateToFriends = () => {
+    if (!isMounted.current) return;
+    console.log(`[${new Date().toISOString()}] Chat: Navigating to friends listing page`);
+    setIsIntentionalNavigation(true);
+    setMessages([]);
+    // Reset random chat state since we're leaving the random chat session
+    resetRandomChatState();
+    router.replace('/(tabs)/friends');
+    setTimeout(() => setIsIntentionalNavigation(false), 500);
+  };
+
   const sendMessage = async () => {
-    if (isSending) {
-      console.warn(`[${new Date().toISOString()}] Chat: Send message aborted: Previous send in progress`);
-      return;
-    }
+    if (isSending) return;
     setIsSending(true);
 
-    console.log(`[${new Date().toISOString()}] Chat: sendMessage called`, { input, userId, partnerId, socketConnected: socket?.connected });
-
     if (!input.trim()) {
-      console.warn(`[${new Date().toISOString()}] Chat: Cannot send message: Empty input`);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Message cannot be empty.',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Message cannot be empty.' });
       setIsSending(false);
       return;
     }
 
-    if (!userId || !partnerId || !socket?.connected) {
-      console.warn(`[${new Date().toISOString()}] Chat: Cannot send message: Missing userId, partnerId, or socket`, { userId, partnerId, socketConnected: socket?.connected });
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Chat is not properly initialized. Please try again.',
-      });
+    if (!userId || !randomPartnerId || !socket?.connected) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Chat is not properly initialized. Please try again.' });
       setIsSending(false);
       return;
     }
@@ -304,16 +315,13 @@ const Chat = () => {
     flatListRef.current?.scrollToEnd({ animated: true });
 
     try {
-      console.log(`[${new Date().toISOString()}] Chat: Emitting send_message`, { userId, partnerId, message: input, timestamp });
       socket.emit('send_message', {
-        toUserId: partnerId,
+        toUserId: randomPartnerId,
         message: input,
         fromUserId: userId,
         timestamp,
       });
-      console.log(`[${new Date().toISOString()}] Chat: Message sent via socket to ${partnerId} (random chat), timestamp ${timestamp}`);
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Chat: Error sending message:`, error.message, error.stack);
       setMessages((prev) => prev.filter((msg) => msg.timestamp !== timestamp));
       Toast.show({
         type: 'error',
@@ -326,48 +334,20 @@ const Chat = () => {
   };
 
   const handleSendFriendRequest = async () => {
-    if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
-      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for friend request`, { userId, partnerId });
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Invalid user or partner ID.',
-      });
+    if (!userId || !randomPartnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(randomPartnerId)) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or partner ID.' });
       return;
     }
 
-    if (hasSentFriendRequest) {
-      console.log(`[${new Date().toISOString()}] Chat: Friend request already sent`);
-      Toast.show({
-        type: 'info',
-        text1: 'Request Already Sent',
-        text2: 'You have already sent a friend request.',
-      });
-      return;
-    }
-
-    console.log(`[${new Date().toISOString()}] Chat: Sending friend request from ${userId} to ${partnerId}`);
     try {
-      await api.post('/api/users/send-friend-request', { userId, friendId: partnerId });
-      setHasSentFriendRequest(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: 'You have sent a friend request.',
-          sender: 'user',
-          timestamp: Date.now(),
-          seen: false,
-          type: 'friendRequestSent',
-        },
-      ]);
-      flatListRef.current?.scrollToEnd({ animated: true });
+      await api.post('/api/users/send-friend-request', { userId, friendId: randomPartnerId });
+      emitFriendRequestSent();
       Toast.show({
         type: 'success',
         text1: 'Request Sent',
-        text2: `Friend request sent to ${partnerName || 'Anonymous'}!`,
+        text2: `Friend request sent to ${randomPartnerName || 'Anonymous'}!`,
       });
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Chat: Error sending friend request:`, error.message, error.stack);
       let errorMessage = 'Failed to send friend request.';
       if (error.response?.status === 400) {
         errorMessage = error.response.data.message || 'Invalid request.';
@@ -383,52 +363,26 @@ const Chat = () => {
   };
 
   const handleAcceptFriendRequest = async (timestamp: number) => {
-    if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
-      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for accepting friend request`, { userId, partnerId });
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Invalid user or partner ID.',
-      });
+    if (!userId || !randomPartnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(randomPartnerId)) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or partner ID.' });
       return;
     }
 
     try {
       await api.post('/api/users/accept-friend-request', {
         userId,
-        friendId: partnerId,
+        friendId: randomPartnerId,
       });
 
       if (user) {
         const updatedUser = {
           ...user,
-          friends: user.friends ? [...user.friends, partnerId] : [partnerId],
+          friends: user.friends ? [...user.friends, randomPartnerId] : [randomPartnerId],
         };
         setUser(updatedUser);
-        console.log(`[${new Date().toISOString()}] Chat: Friend added to user`, { friendId: partnerId });
+        console.log(`[${new Date().toISOString()}] Chat: Friend added to user`, { friendId: randomPartnerId });
       }
-
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.timestamp === timestamp
-            ? { ...msg, text: `${partnerName || 'Anonymous'} is now your friend!` }
-            : msg
-        )
-      );
-
-      Toast.show({
-        type: 'success',
-        text1: 'Friend Added',
-        text2: `${partnerName || 'Anonymous'} is now your friend!`,
-      });
-
-      router.push({
-        pathname: '/(tabs)/friends/[friendId]',
-        params: { friendId: partnerId, friendName: partnerName },
-      });
-      console.log(`[${new Date().toISOString()}] Chat: Navigated to friend chat`, { friendId: partnerId });
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Chat: Error accepting friend request:`, error.message, error.stack);
       let errorMessage = 'Failed to accept friend request.';
       if (error.response?.status === 400) {
         errorMessage = error.response.data.message || 'Invalid request.';
@@ -444,35 +398,28 @@ const Chat = () => {
   };
 
   const handleRejectFriendRequest = async (timestamp: number) => {
-    if (!userId || !partnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(partnerId)) {
-      console.warn(`[${new Date().toISOString()}] Chat: Invalid user or partner ID for rejecting friend request`, { userId, partnerId });
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Invalid user or partner ID.',
-      });
+    if (!userId || !randomPartnerId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(randomPartnerId)) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or partner ID.' });
       return;
     }
 
     try {
       await api.post('/api/users/reject-friend-request', {
         userId,
-        friendId: partnerId,
+        friendId: randomPartnerId,
       });
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.timestamp === timestamp
-            ? { ...msg, text: 'Friend request rejected.' }
-            : msg
+          msg.timestamp === timestamp ? { ...msg, text: 'Friend request rejected.' } : msg
         )
       );
+      socket.emit('friend_request_rejected', { userId, friendId: randomPartnerId });
       Toast.show({
         type: 'success',
         text1: 'Request Rejected',
-        text2: `Friend request from ${partnerName || 'Anonymous'} rejected.`,
+        text2: `Friend request from ${randomPartnerName || 'Anonymous'} rejected.`,
       });
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Chat: Error rejecting friend request:`, error.message, error.stack);
       let errorMessage = 'Failed to reject friend request.';
       if (error.response?.status === 400) {
         errorMessage = error.response.data.message || 'Invalid request.';
@@ -489,38 +436,45 @@ const Chat = () => {
 
   const handleLeaveChat = () => {
     console.log(`[${new Date().toISOString()}] Chat: Leaving chat`);
-    socket?.emit('leave_chat', { toUserId: partnerId });
+    socket?.emit('leave_chat', { toUserId: randomPartnerId });
     setLeaveConfirmVisible(false);
     navigateToHome();
   };
 
+  const handleNewPartner = () => {
+    handleLeaveChat();
+  };
+
+  const toggleExtraButtons = () => {
+    setShowExtraButtons((prev) => !prev);
+    console.log(`[${new Date().toISOString()}] Chat: Toggled extra buttons visibility`, { showExtraButtons: !showExtraButtons });
+  };
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isUser = item.sender === 'user';
-    const isLast = index === messages.length - 1;
-    const senderLabel = isUser ? '' : partnerName || 'Anonymous';
 
     if (item.type === 'friendRequestSent') {
       return (
-        <View className="my-2 self-center bg-indigo-600/20 rounded-lg px-4 py-2">
-          <Text className="text-indigo-200 text-sm">{item.text}</Text>
+        <View className="my-2 self-center bg-[#2F2F2F] rounded-lg px-4 py-2">
+          <Text className="text-white text-sm">{item.text}</Text>
         </View>
       );
     }
 
     if (item.type === 'friendRequestReceived') {
       return (
-        <View className="my-2 self-center bg-gray-600/20 rounded-lg px-4 py-2">
-          <Text className="text-gray-200 text-sm mb-2">{item.text}</Text>
+        <View className="my-2 self-center bg-[#2F2F2F] rounded-lg px-4 py-2">
+          <Text className="text-white text-sm mb-2">{item.text}</Text>
           <View className="flex-row justify-center space-x-3">
             <TouchableOpacity
               onPress={() => handleAcceptFriendRequest(item.timestamp)}
-              className="bg-indigo-500 px-3 py-1 rounded-lg"
+              className="bg-[#4A90E2] px-3 py-1 rounded-lg"
             >
               <Text className="text-white text-sm font-semibold">Accept</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleRejectFriendRequest(item.timestamp)}
-              className="bg-red-500 px-3 py-1 rounded-lg"
+              className="bg-[#EF4444] px-3 py-1 rounded-lg"
             >
               <Text className="text-white text-sm font-semibold">Cancel</Text>
             </TouchableOpacity>
@@ -533,20 +487,15 @@ const Chat = () => {
       <View className={`my-2 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
         <View
           className={`px-4 py-3 rounded-2xl shadow-sm ${
-            isUser ? 'bg-indigo-500' : 'bg-gray-700'
+            isUser ? 'bg-[#4A90E2]' : 'bg-[#2F2F2F]'
           }`}
         >
-          {!isUser && (
-            <Text className="text-white text-sm font-semibold mb-1">{senderLabel}</Text>
-          )}
           <Text className="text-white text-base leading-5">{item.text}</Text>
         </View>
         <View className="flex-row justify-between mt-1">
-          {isLast && (
-            <Text className="text-xs text-gray-400">
-              {moment(item.timestamp).format('h:mm A')}
-            </Text>
-          )}
+          <Text className="text-xs text-[#A0A0A0]">
+            {moment(item.timestamp).format('h:mm A')}
+          </Text>
           {isUser && item.seen && (
             <Text className="text-xs text-green-400">Seen</Text>
           )}
@@ -555,28 +504,44 @@ const Chat = () => {
     );
   };
 
+  const isSendFriendRequestDisabled:any =
+    !randomPartnerId ||
+    connectionStatus === 'disconnected' ||
+    (friendRequestSent && (friendRequestSent.fromUserId === userId || friendRequestSent.fromUserId === randomPartnerId));
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View className="flex-1 bg-[#141432]">
-        <View className="flex-row items-center justify-between px-4 pt-5 pb-3 border-b border-gray-800 bg-[#141432] z-10">
+        <View className="flex-row items-center px-4 pt-10 pb-3 bg-[#141432]">
           <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)}>
-            <Ionicons name="chevron-back" size={28} color="white" />
+            <Ionicons name="chevron-back" size={28} color="#4A90E2" />
           </TouchableOpacity>
           <View className="flex-1 items-center">
             <Text className="text-white text-lg font-semibold">
-              {partnerName || 'Anonymous'}
+              {randomPartnerName || 'Anonymous'}
             </Text>
-            {connectionStatus === 'disconnected' && (
-              <Text className="text-gray-400 text-xs mt-1">Reconnecting...</Text>
-            )}
           </View>
           <View style={{ width: 28 }} />
         </View>
 
-        <View className="px-4 py-3 bg-[#1A1A38] border-b border-gray-800">
-          <Text className="text-white text-sm font-semibold">About {partnerName || 'Anonymous'}</Text>
-          <Text className="text-gray-300 text-sm mt-1">{partnerBio}</Text>
-        </View>
+        <TouchableOpacity
+          onPress={() => setIsPartnerInfoVisible(!isPartnerInfoVisible)}
+          className="self-center bg-[#2F2F2F] rounded-lg px-4 py-2 my-2 flex-row items-center"
+        >
+          <Text className="text-white text-sm font-semibold">About partner</Text>
+          <Ionicons
+            name={isPartnerInfoVisible ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color="#A0A0A0"
+            className="ml-2"
+          />
+        </TouchableOpacity>
+        {isPartnerInfoVisible && (
+          <View className="self-center bg-[#2F2F2F] rounded-lg px-4 py-2 mb-2">
+            <Text className="text-white text-sm">Male</Text>
+            <Text className="text-white text-sm">Indian</Text>
+          </View>
+        )}
 
         <FlatList
           ref={flatListRef}
@@ -584,49 +549,85 @@ const Chat = () => {
           keyExtractor={(item, index) => `${item.timestamp}-${index}`}
           renderItem={renderMessage}
           className="flex-1 px-4 pt-3"
-          contentContainerStyle={{ paddingBottom: 20 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
         {isPartnerTyping && (
-          <Text className="text-gray-400 text-sm px-4 pb-2">Typing...</Text>
+          <View className="px-4 pb-2">
+            <Text className="text-white text-sm">...</Text>
+            <Text className="text-[#A0A0A0] text-xs">typing</Text>
+          </View>
         )}
 
-        <View className="flex-row items-center bg-[#1A1A38] rounded-full p-3 mx-4 mb-4 shadow-sm">
-          <TouchableOpacity
-            onPress={handleSendFriendRequest}
-            disabled={!partnerId || connectionStatus === 'disconnected' || hasSentFriendRequest}
-            className="p-2"
-          >
-            <AntDesign
-              name="adduser"
-              size={24}
-              color={partnerId && connectionStatus !== 'disconnected' && !hasSentFriendRequest ? '#5B2EFF' : 'gray'}
+        <View className="mx-4 mb-4">
+          <View className="flex-row items-center bg-[#2F2F2F] rounded-full p-2 shadow-sm">
+            <TouchableOpacity className="p-2">
+              <Ionicons name="camera-outline" size={24} color="#4A90E2" />
+            </TouchableOpacity>
+            <TextInput
+              value={input}
+              onChangeText={(text) => {
+                setInput(text);
+                handleTyping();
+              }}
+              placeholder="Write a message..."
+              placeholderTextColor="#A0A0A0"
+              className="flex-1 text-white px-3 text-base"
+              editable={connectionStatus !== 'disconnected'}
             />
-          </TouchableOpacity>
-          <TextInput
-            value={input}
-            onChangeText={(text) => {
-              setInput(text);
-              handleTyping();
-            }}
-            placeholder="Type a message..."
-            placeholderTextColor="#9CA3AF"
-            className="flex-1 text-white px-3 text-base"
-            editable={connectionStatus !== 'disconnected'}
-          />
-          <TouchableOpacity
-            onPress={() => {
-              console.log(`[${new Date().toISOString()}] Chat: Send button pressed`);
-              sendMessage();
-            }}
-            disabled={isSending || connectionStatus === 'disconnected'}
-            className={`ml-2 bg-indigo-500 px-4 py-2 rounded-full ${
-              isSending || connectionStatus === 'disconnected' ? 'opacity-50' : ''
-            }`}
-          >
-            <Text className="text-white font-semibold text-base">Send</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleExtraButtons}
+              className="p-2"
+            >
+              <Ionicons
+                name="apps"
+                size={24}
+                color={showExtraButtons ? '#4A90E2' : '#A0A0A0'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={sendMessage}
+              disabled={isSending || connectionStatus === 'disconnected' || !input.trim()}
+              className={`p-2 ${isSending || connectionStatus === 'disconnected' || !input.trim() ? 'opacity-50' : ''}`}
+            >
+              <Ionicons name="send" size={24} color="#4A90E2" />
+            </TouchableOpacity>
+          </View>
+
+          {showExtraButtons && (
+            <View className="mt-2 space-y-2">
+              <TouchableOpacity
+                onPress={handleSendFriendRequest}
+                disabled={isSendFriendRequestDisabled}
+                className={`flex-row items-center justify-center py-3 rounded-lg ${
+                  isSendFriendRequestDisabled ? 'bg-gray-600 opacity-50' : 'bg-[#4A90E2]'
+                }`}
+              >
+                <Ionicons
+                  name="person-add-outline"
+                  size={20}
+                  color="white"
+                  className="mr-2"
+                />
+                <Text className="text-white text-sm font-semibold">Send friend request</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleLeaveChat}
+                className="flex-row items-center justify-center bg-[#2F2F2F] py-3 rounded-lg"
+              >
+                <Ionicons name="close-circle-outline" size={20} color="#EF4444" className="mr-2" />
+                <Text className="text-[#EF4444] text-sm font-semibold">End chat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleNewPartner}
+                className="flex-row items-center justify-center bg-[#2F2F2F] py-3 rounded-lg"
+              >
+                <Ionicons name="refresh-outline" size={20} color="#4A90E2" className="mr-2" />
+                <Text className="text-[#4A90E2] text-sm font-semibold">New partner</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
@@ -644,10 +645,7 @@ const Chat = () => {
             </Text>
             <View className="flex-row justify-end space-x-3">
               <TouchableOpacity
-                onPress={() => {
-                  console.log(`[${new Date().toISOString()}] Chat: Leave modal cancelled`);
-                  setLeaveConfirmVisible(false);
-                }}
+                onPress={() => setLeaveConfirmVisible(false)}
                 className="bg-gray-600 px-4 py-2 rounded-lg"
               >
                 <Text className="text-white font-medium">Cancel</Text>
@@ -676,7 +674,7 @@ const Chat = () => {
             <Text className="text-gray-300 text-center mb-5">
               Your partner has left the chat.
             </Text>
-            <TouchableOpacity onPress={navigateToHome} className="bg-indigo-500 px-4 py-2 rounded-lg">
+            <TouchableOpacity onPress={navigateToHome} className="bg-[#4A90E2] px-4 py-2 rounded-lg">
               <Text className="text-white font-semibold">OK</Text>
             </TouchableOpacity>
           </View>
