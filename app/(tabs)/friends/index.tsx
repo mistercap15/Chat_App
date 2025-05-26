@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import useUserStore from '@/store/useUserStore';
@@ -18,39 +18,61 @@ const Friends = () => {
   const { socket, userId, connectSocket } = useSocketStore();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(false);
+  const lastFetchTimeRef = useRef<number | null>(null); // Throttle fetchFriends
 
-  const fetchFriends = async () => {
+  const log = (message: string, data?: any) => {
+    console.log(`[${new Date().toISOString()}] Friends: ${message}`, data || '');
+  };
+
+  const fetchFriends = useCallback(async () => {
+    if (!userId || !/^[0-9a-fA-F]{24}$/.test(userId)) {
+      log('Invalid userId, skipping fetch', { userId });
+      return;
+    }
+
+    const now = Date.now();
+    if (loading || (lastFetchTimeRef.current && now - lastFetchTimeRef.current < 5000)) {
+      log('Skipping fetch: already loading or recently fetched', { loading, lastFetch: lastFetchTimeRef.current });
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await api.get(`/api/users/friends/${userId}`);
       setFriends(response.data.friends || []);
-      console.log(`[${new Date().toISOString()}] Friends: Fetched friends`, { friendCount: response.data.friends?.length || 0 });
+      lastFetchTimeRef.current = now;
+      log('Fetched friends', { friendCount: response.data.friends?.length || 0 });
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Friends: Error fetching friends`, error.message);
+      log('Error fetching friends', { error: error.message });
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch friends.' });
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId, loading]);
 
   useFocusEffect(
     useCallback(() => {
-      if (userId) {
-        console.log(`[${new Date().toISOString()}] Friends: Connecting socket`, { userId });
-        connectSocket(userId);
+      if (!userId || !/^[0-9a-fA-F]{24}$/.test(userId)) {
+        log('Invalid userId, skipping focus effect', { userId });
+        return;
       }
 
+      log('Screen focused, connecting socket', { userId });
+      connectSocket(userId);
       fetchFriends();
 
       const friendRemovedListener = ({ removedUserId }: { removedUserId: string }) => {
-        setFriends((prev) => prev.filter((friend) => friend._id !== removedUserId));
-        console.log(`[${new Date().toISOString()}] Friends: Friend removed`, { removedUserId });
+        setFriends((prev) => {
+          const newFriends = prev.filter((friend) => friend._id !== removedUserId);
+          log('Friend removed', { removedUserId, newFriendCount: newFriends.length });
+          return newFriends;
+        });
       };
 
       const friendAddedListener = ({ userId: acceptorId, friendId }: { userId: string; friendId: string }) => {
         if (acceptorId === userId || friendId === userId) {
-          fetchFriends(); // Refresh the friends list
-          console.log(`[${new Date().toISOString()}] Friends: Friend added, refreshing list`, { acceptorId, friendId });
+          log('Friend added, scheduling fetch', { acceptorId, friendId });
+          setTimeout(() => fetchFriends(), 1000); // Delay to avoid rapid calls
         }
       };
 
@@ -58,17 +80,16 @@ const Friends = () => {
       socket?.on('friend_request_accepted', friendAddedListener);
 
       return () => {
-        console.log(`[${new Date().toISOString()}] Friends: Cleaned up socket listeners`);
+        log('Cleaning up socket listeners');
         socket?.off('friend_removed', friendRemovedListener);
         socket?.off('friend_request_accepted', friendAddedListener);
       };
-    }, [userId, connectSocket, socket])
+    }, [userId, connectSocket, socket, fetchFriends])
   );
 
   const handleRemoveFriend = async (friendId: string) => {
-    // Validate userId and friendId
     if (!userId || !friendId || !/^[0-9a-fA-F]{24}$/.test(userId) || !/^[0-9a-fA-F]{24}$/.test(friendId)) {
-      console.warn(`[${new Date().toISOString()}] Friends: Invalid userId or friendId`, { userId, friendId });
+      log('Invalid userId or friendId', { userId, friendId });
       Toast.show({
         type: 'error',
         text1: 'Error',
@@ -78,34 +99,19 @@ const Friends = () => {
     }
 
     try {
-      // Fetch the latest friends list to ensure the friend still exists
-      await fetchFriends();
-      const friendExists = friends.some((friend) => friend._id === friendId);
-      if (!friendExists) {
-        console.warn(`[${new Date().toISOString()}] Friends: Friend not found in list`, { friendId });
-        Toast.show({
-          type: 'info',
-          text1: 'Not Found',
-          text2: 'This friend is no longer in your list.',
-        });
-        return;
-      }
-
-      // Use DELETE method and pass userId and friendId as URL parameters
       await api.delete(`/api/users/remove-friend/${userId}/${friendId}`);
       setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
       socket?.emit('friend_removed', { userId, removedUserId: friendId });
-      console.log(`[${new Date().toISOString()}] Friends: Removed friend`, { friendId });
+      log('Removed friend', { friendId });
       Toast.show({
         type: 'success',
         text1: 'Friend Removed',
         text2: 'The friend has been removed from your list.',
       });
     } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Friends: Error removing friend`, { userId, friendId, error: error.message });
+      log('Error removing friend', { userId, friendId, error: error.message });
       if (error.response?.status === 404) {
-        // Refresh the friends list to sync with the backend
-        await fetchFriends();
+        setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
         Toast.show({
           type: 'info',
           text1: 'Not Found',
@@ -122,12 +128,12 @@ const Friends = () => {
   };
 
   const navigateToHome = () => {
-    console.log(`[${new Date().toISOString()}] Friends: Navigating to home`);
+    log('Navigating to home');
     router.replace('/(tabs)/home');
   };
 
   const navigateToFriendChat = (friendId: string) => {
-    console.log(`[${new Date().toISOString()}] Friends: Navigating to friend chat`, { friendId });
+    log('Navigating to friend chat', { friendId });
     router.push(`/friends/${friendId}`);
   };
 

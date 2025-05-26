@@ -2,8 +2,10 @@ import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import useSocketStore from '@/store/useSocketStore';
+import useUserStore from '@/store/useUserStore';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 
 const Home = () => {
   const {
@@ -13,20 +15,52 @@ const Home = () => {
     stopSearching,
     isSearching,
     randomPartnerId,
+    socket,
+    connectionStatus,
   } = useSocketStore();
+  const { user } = useUserStore();
 
   useFocusEffect(
     React.useCallback(() => {
-      if (userId) {
-        console.log(`[${new Date().toISOString()}] Home: Connecting socket`, { userId });
-        connectSocket(userId);
+      if (!user?._id) {
+        console.log(`[${new Date().toISOString()}] Home: No user ID, skipping socket connection`);
+        return;
       }
-    }, [userId, connectSocket])
+
+      // Only reconnect if userId changed or socket is disconnected
+      if (user._id !== userId || !socket || connectionStatus === 'disconnected') {
+        console.log(`[${new Date().toISOString()}] Home: Connecting socket`, { userId: user._id });
+        connectSocket(user._id);
+      } else {
+        console.log(`[${new Date().toISOString()}] Home: Socket already connected`, { userId: user._id });
+      }
+    }, [user?._id, userId, connectSocket, socket, connectionStatus])
   );
 
   const handleStartSearch = () => {
+    if (!user?._id) {
+      console.log(`[${new Date().toISOString()}] Home: No user ID, cannot start search`);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Please register to start searching.' });
+      return;
+    }
+    if (!socket || connectionStatus !== 'connected') {
+      console.log(`[${new Date().toISOString()}] Home: Socket not connected, attempting to reconnect`, { userId });
+      connectSocket(user._id);
+      setTimeout(() => {
+        if (socket?.connected) {
+          startSearching(() => {
+            console.log(`[${new Date().toISOString()}] Home: Match found, redirecting to chat`);
+            router.push('/(tabs)/home/chat');
+          });
+        } else {
+          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
+        }
+      }, 1000);
+      return;
+    }
     startSearching(() => {
       console.log(`[${new Date().toISOString()}] Home: Match found, redirecting to chat`);
+      router.push('/(tabs)/home/chat');
     });
   };
 

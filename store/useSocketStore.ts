@@ -14,14 +14,14 @@ interface FriendRequest {
 interface SocketStore {
   socket: any | null;
   userId: string | null;
-  randomPartnerId: string | null; // For random chat sessions
-  randomChatType: 'random' | null; // For random chat type
-  friendPartnerId: string | null; // For friend chat sessions
-  friendChatType: 'friend' | null; // For friend chat type
+  randomPartnerId: string | null;
+  randomChatType: 'random' | null;
+  friendPartnerId: string | null;
+  friendChatType: 'friend' | null;
   isSearching: boolean;
   username: string | null;
-  randomPartnerName: string | null; // For random chat partner name
-  friendPartnerName: string | null; // For friend chat partner name
+  randomPartnerName: string | null;
+  friendPartnerName: string | null;
   isPartnerTyping: boolean;
   connectionStatus: 'disconnected' | 'connecting' | 'connected';
   friendRequest: FriendRequest | null;
@@ -71,21 +71,27 @@ const useSocketStore = create<SocketStore>((set, get) => {
 
   const connectSocket = (userId: string) => {
     log('Attempting to connect socket', { userId });
-    const { socket, connectionStatus, isConnecting } = get();
+    const { socket, isConnecting } = get();
 
-    if (isConnecting) {
-      log('Socket connection already in progress, skipping', { userId });
+    if (!userId || !/^[0-9a-fA-F]{24}$/.test(userId)) {
+      log('Invalid userId for connectSocket', { userId });
       return;
     }
 
-    if (socket?.connected) {
-      log('Socket already connected', { userId });
+    if (socket?.connected && get().userId === userId) {
+      log('Socket already connected with same userId', { userId });
+      return;
+    }
+
+    if (isConnecting) {
+      log('Socket connection in progress, skipping', { userId });
       return;
     }
 
     if (socket) {
       log('Disconnecting existing socket', { userId });
       socket.disconnect();
+      set({ socket: null, connectionStatus: 'disconnected', isConnecting: false });
     }
 
     set({ connectionStatus: 'connecting', isConnecting: true });
@@ -106,33 +112,32 @@ const useSocketStore = create<SocketStore>((set, get) => {
         userId,
         username: user?.user_name || 'Anonymous',
       });
-      log('Emitted set_username', { userId, username: user?.user_name || 'Anonymous' });
+      log('Emitted set_username', { userId, username: user?.user_name });
       fetchPendingFriendRequests(userId);
       const { randomPartnerId, friendPartnerId, userId: currentUserId } = get();
       if (randomPartnerId && currentUserId) {
         const roomId = [currentUserId, randomPartnerId].sort().join('-');
         newSocket.emit('join_room', { roomId, userId: currentUserId });
-        log('Rejoined random chat room after reconnect', { roomId, userId: currentUserId });
+        log('Rejoined random chat room', { roomId, userId: currentUserId });
       }
       if (friendPartnerId && currentUserId) {
         const roomId = [currentUserId, friendPartnerId].sort().join('_');
         newSocket.emit('join_room', { roomId, userId: currentUserId });
-        log('Rejoined friend chat room after reconnect', { roomId, userId: currentUserId });
+        log('Rejoined friend chat room', { roomId, userId: currentUserId });
       }
     });
 
-    newSocket.on('reconnect', (attempt: any) => {
+    newSocket.on('reconnect', (attempt: number) => {
       log('Socket reconnected', { userId, attempt });
       set({ connectionStatus: 'connected', isConnecting: false });
       newSocket.emit('set_username', {
         userId,
         username: user?.user_name || 'Anonymous',
       });
-      log('Emitted set_username on reconnect', { userId, username: user?.user_name || 'Anonymous' });
       fetchPendingFriendRequests(userId);
     });
 
-    newSocket.on('reconnect_attempt', (attempt: any) => {
+    newSocket.on('reconnect_attempt', (attempt: number) => {
       log('Socket reconnect attempt', { userId, attempt });
     });
 
@@ -149,7 +154,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
     newSocket.on('match_found', ({ partnerId, partnerName }: { partnerId: string; partnerName: string }) => {
       log('Match found', { partnerId, partnerName });
       if (!/^[0-9a-fA-F]{24}$/.test(partnerId)) {
-        log('Invalid partnerId received', { partnerId });
+        log('Invalid partnerId', { partnerId });
         set({ isSearching: false });
         Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid partner ID.' });
         return;
@@ -188,7 +193,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
     });
 
     newSocket.on('friend_request_status', ({ fromUserId, toUserId, fromUsername, status }: { fromUserId: string; toUserId: string; fromUsername: string; status: string }) => {
-      log('Friend request status updated', { fromUserId, toUserId, status });
+      log('Friend request status', { fromUserId, toUserId, status });
       if (status === 'sent') {
         set({ friendRequestSent: { fromUserId, toUserId, fromUsername } });
       } else if (status === 'rejected') {
@@ -199,10 +204,9 @@ const useSocketStore = create<SocketStore>((set, get) => {
     newSocket.on('friend_request_accepted', ({ userId, friendId }: { userId: string; friendId: string }) => {
       log('Friend request accepted', { userId, friendId });
       set({ friendRequestSent: null, friendRequest: null });
-      // Reset random chat session if the friend request was accepted in a random chat
       const { randomPartnerId } = get();
       if (randomPartnerId && (friendId === randomPartnerId || userId === randomPartnerId)) {
-        log('Resetting random chat session after friend request accepted', { userId, friendId });
+        log('Resetting random chat session');
         get().resetRandomChatState();
       }
     });
@@ -225,21 +229,21 @@ const useSocketStore = create<SocketStore>((set, get) => {
 
   const handleAppStateChange = (nextAppState: AppStateStatus) => {
     const { socket, userId, randomPartnerId, friendPartnerId } = get();
-    log('AppState changed', { nextAppState, userId, randomPartnerId, friendPartnerId });
-    if (nextAppState === 'active' && socket && userId) {
-      if (!socket.connected && !get().isConnecting) {
-        log('App foregrounded, attempting to reconnect', { userId });
+    log('AppState changed', { nextAppState, userId });
+    if (nextAppState === 'active' && userId) {
+      if (!socket || !socket.connected) {
+        log('App foregrounded, reconnecting', { userId });
         connectSocket(userId);
       }
       if (randomPartnerId) {
         const roomId = [userId, randomPartnerId].sort().join('-');
-        socket.emit('join_room', { roomId, userId });
-        log('Rejoined random chat room after foreground', { roomId, userId });
+        socket?.emit('join_room', { roomId, userId });
+        log('Rejoined random chat room', { roomId, userId });
       }
       if (friendPartnerId) {
         const roomId = [userId, friendPartnerId].sort().join('_');
-        socket.emit('join_room', { roomId, userId });
-        log('Rejoined friend chat room after foreground', { roomId, userId });
+        socket?.emit('join_room', { roomId, userId });
+        log('Rejoined friend chat room', { roomId, userId });
       }
       fetchPendingFriendRequests(userId);
     }
@@ -263,13 +267,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
     friendRequest: null,
     friendRequestSent: null,
     isConnecting: false,
-    connectSocket: (userId: string) => {
-      if (!userId || !/^[0-9a-fA-F]{24}$/.test(userId)) {
-        log('Invalid userId for connectSocket', { userId });
-        return;
-      }
-      connectSocket(userId);
-    },
+    connectSocket,
     startSearching: (onMatched: () => void) => {
       const { socket, userId, isSearching } = get();
       log('Starting search', { userId, isSearching });
@@ -300,7 +298,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       const { socket, userId } = get();
       log('Starting friend chat', { userId, friendId });
       if (!userId || !friendId || !socket?.connected) {
-        log('Cannot start friend chat: invalid data', { userId, friendId, socketConnected: !!socket?.connected });
+        log('Cannot start friend chat', { userId, friendId, socketConnected: !!socket?.connected });
         Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or friend ID.' });
         return;
       }
@@ -351,7 +349,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
     },
     emitFriendRequestSent: () => {
       const { socket, userId, randomPartnerId, username } = get();
-      log('Emitting friend request sent', { userId, partnerId: randomPartnerId, username });
+      log('Emitting friend request sent', { userId, partnerId: randomPartnerId });
       if (socket?.connected && userId && randomPartnerId) {
         socket.emit('friend_request_sent', { toUserId: randomPartnerId, fromUserId: userId, fromUsername: username });
       }
@@ -365,7 +363,6 @@ const useSocketStore = create<SocketStore>((set, get) => {
         isPartnerTyping: false,
         isSearching: false,
       });
-      log('Random chat state reset complete');
     },
     resetFriendChatState: () => {
       log('Resetting friend chat state');
@@ -375,17 +372,17 @@ const useSocketStore = create<SocketStore>((set, get) => {
         friendPartnerName: null,
         isPartnerTyping: false,
       });
-      log('Friend chat state reset complete');
     },
     resetState: () => {
       log('Resetting socket state');
-      const { socket, userId } = get();
+      const { socket } = get();
       if (socket?.connected) {
         socket.disconnect();
         log('Socket disconnected during reset');
       }
       set({
         socket: null,
+        userId: null,
         randomPartnerId: null,
         randomChatType: null,
         friendPartnerId: null,
@@ -400,39 +397,51 @@ const useSocketStore = create<SocketStore>((set, get) => {
         username: null,
         isConnecting: false,
       });
-      log('Socket state reset complete');
     },
     clearFriendRequestSent: () => {
-      log('Clearing friend request sent state');
+      log('Clearing friend request sent');
       set({ friendRequestSent: null });
     },
   };
 });
 
+// Debounce subscription to user store
+let lastUserId: string | null = null;
+let debounceTimeout: NodeJS.Timeout | null = null;
+
 useUserStore.subscribe((state) => {
   const newUserId = state.user?._id?.toString() || null;
-  const { socket, userId, connectionStatus, isConnecting } = useSocketStore.getState();
   const log = (message: string, data?: any) => {
     console.log(`[${new Date().toISOString()}] SocketStore: ${message}`, data || '');
   };
 
-  log('User store subscription triggered', { newUserId, userId });
+  log('User store subscription triggered', { newUserId, lastUserId });
 
-  if (!newUserId) {
-    log('No user ID, resetting state');
-    useSocketStore.getState().resetState();
+  if (newUserId === lastUserId) {
+    log('No userId change, skipping', { newUserId });
     return;
   }
 
-  if (socket?.connected && userId === newUserId) {
-    log('Socket already connected for user', { userId });
-    return;
+  if (debounceTimeout) {
+    clearTimeout(debounceTimeout);
   }
 
-  if (connectionStatus === 'disconnected' && !isConnecting) {
-    log('Connecting socket for new user', { newUserId });
-    useSocketStore.getState().connectSocket(newUserId);
-  }
+  debounceTimeout = setTimeout(() => {
+    lastUserId = newUserId;
+    const { socket, userId } = useSocketStore.getState();
+
+    if (!newUserId) {
+      log('No user ID, resetting state');
+      useSocketStore.getState().resetState();
+      return;
+    }
+
+    if (newUserId !== userId || !socket?.connected) {
+      log('User ID changed or socket disconnected, reconnecting', { newUserId, userId });
+      useSocketStore.getState().resetState();
+      useSocketStore.getState().connectSocket(newUserId);
+    }
+  }, 500);
 });
 
 export default useSocketStore;

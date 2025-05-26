@@ -46,20 +46,15 @@ const Settings: React.FC = () => {
         log('Processing user deletion');
         clearUser();
         resetState();
-        log('User state cleared');
         setIsDeleting(false);
         setDeleteModalVisible(false);
-        log('Modal closed and loader stopped');
         Toast.show({
           type: 'success',
           text1: 'Account Deleted',
           text2: 'Your account has been deleted successfully.',
         });
-        log('Success toast triggered');
         router.replace('/(tabs)/home');
         log('Navigated to home');
-      } else {
-        log('User ID mismatch, ignoring event');
       }
     });
 
@@ -86,15 +81,13 @@ const Settings: React.FC = () => {
     }
 
     setIsDeleting(true);
-    setDeleteModalVisible(true); // Ensure modal stays open during deletion
-    log('Deleting account', { userId: user?._id });
+    setDeleteModalVisible(true);
+    log('Deleting account', { userId: user._id });
 
     try {
       const response = await api.post('/api/users/delete', { userId: user._id }, { timeout: 10000 });
       log('Delete response received', { response: response.data });
-      // Fallback: Handle success via HTTP if socket event is missed
       if (response.data.message === 'User deleted successfully.') {
-        log('Handling delete success via HTTP response');
         clearUser();
         resetState();
         setIsDeleting(false);
@@ -126,7 +119,7 @@ const Settings: React.FC = () => {
 
   return (
     <View className="flex-1 bg-[#1C1C3A]">
-      <View className="flex-row items-center justify-between px-4 py-4 border-b border-b-gray-700 bg-[#1C1C3A]">
+      <View className="flex-row items-center justify-between px-4 py-4 border-b border-gray-700 bg-[#1C1C3A]">
         <View className="flex-row items-center gap-2">
           <Ionicons name="settings-outline" size={26} color="white" />
           <Text className="text-white text-xl font-semibold">Settings</Text>
