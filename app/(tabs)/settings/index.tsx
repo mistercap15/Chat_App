@@ -1,3 +1,4 @@
+// src/components/Settings.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Image, ScrollView, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -14,16 +15,16 @@ interface OptionProps {
 }
 
 const Option: React.FC<OptionProps> = ({ icon, label, onPress }) => (
-  <TouchableOpacity onPress={onPress} className="flex-row items-center bg-[#2E2E4D] rounded-xl p-4">
+  <TouchableOpacity onPress={onPress} className="flex-row items-center bg-[#2E2E4D] rounded-xl p-4 mb-3">
     <Ionicons name={icon} size={24} color="#8B5CF6" />
     <Text className="text-white text-base ml-3">{label}</Text>
   </TouchableOpacity>
 );
 
-const Settings: React.FC = () => {
+const Settings = () => {
   const router = useRouter();
-  const { user, clearUser } = useUserStore();
-  const { socket, resetState } = useSocketStore();
+  const { user, clearUser }:any = useUserStore();
+  const { socket, disconnectSocket } = useSocketStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -32,88 +33,41 @@ const Settings: React.FC = () => {
   };
 
   useEffect(() => {
-    log('Settings component mounted', { userId: user?._id, socketConnected: socket?.connected });
-    if (!socket) {
-      log('No socket instance available');
-      return;
-    }
-
-    socket.on('connect', () => log('Socket connected'));
-    socket.on('disconnect', () => log('Socket disconnected'));
+    if (!socket) return;
     socket.on('user_deleted', ({ userId }: { userId: string }) => {
-      log('User deleted event received', { userId, currentUserId: user?._id });
       if (userId === user?._id) {
-        log('Processing user deletion');
         clearUser();
-        resetState();
+        disconnectSocket();
         setIsDeleting(false);
         setDeleteModalVisible(false);
-        Toast.show({
-          type: 'success',
-          text1: 'Account Deleted',
-          text2: 'Your account has been deleted successfully.',
-        });
+        Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
         router.replace('/(tabs)/home');
-        log('Navigated to home');
       }
     });
-
     return () => {
-      log('Cleaning up socket listeners');
       socket.off('user_deleted');
-      socket.off('connect');
-      socket.off('disconnect');
     };
-  }, [socket, user?._id, clearUser, resetState]);
+  }, [socket, user?._id, clearUser, disconnectSocket]);
 
   const handleDeleteAccount = async () => {
-    if (!user?._id) {
-      log('No user ID, cannot delete');
-      Toast.show({ type: 'error', text1: 'Error', text2: 'User ID not found.' });
-      setDeleteModalVisible(false);
-      return;
-    }
-
-    if (isDeleting) {
-      log('Delete already in progress');
-      Toast.show({ type: 'info', text1: 'Processing', text2: 'Delete request is already in progress.' });
-      return;
-    }
-
+    if (!user?._id || isDeleting) return;
     setIsDeleting(true);
-    setDeleteModalVisible(true);
-    log('Deleting account', { userId: user._id });
-
     try {
-      const response = await api.post('/api/users/delete', { userId: user._id }, { timeout: 10000 });
-      log('Delete response received', { response: response.data });
-      if (response.data.message === 'User deleted successfully.') {
-        clearUser();
-        resetState();
-        setIsDeleting(false);
-        setDeleteModalVisible(false);
-        Toast.show({
-          type: 'success',
-          text1: 'Account Deleted',
-          text2: 'Your account has been deleted successfully.',
-        });
-        router.replace('/(tabs)/home');
-        log('Processed delete via HTTP: state cleared, modal closed, navigated to home');
-      }
-    } catch (error: any) {
-      log('Error deleting account', { error: error.message, response: error.response?.data });
+      await api.post('/api/users/delete', { userId: user._id });
+      clearUser();
+      disconnectSocket();
       setIsDeleting(false);
       setDeleteModalVisible(false);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.response?.data?.message || 'Failed to delete account.',
-      });
+      Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
+      router.replace('/(tabs)/home');
+    } catch (error: any) {
+      setIsDeleting(false);
+      setDeleteModalVisible(false);
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to delete account.' });
     }
   };
 
   const handleOptionPress = (label: string) => {
-    log('Option pressed', { label });
     Toast.show({ type: 'info', text1: 'Coming Soon', text2: `${label} is not yet implemented.` });
   };
 
@@ -124,97 +78,64 @@ const Settings: React.FC = () => {
           <Ionicons name="settings-outline" size={26} color="white" />
           <Text className="text-white text-xl font-semibold">Settings</Text>
         </View>
-        <TouchableOpacity
-          onPress={() => {
-            log('Navigating to edit profile');
-            router.push('/(tabs)/settings/register');
-          }}
-          disabled={isDeleting}
-        >
+        <TouchableOpacity onPress={() => router.push('/(tabs)/settings/register')} disabled={isDeleting}>
           <Text className="text-indigo-400 font-semibold text-base">Edit</Text>
         </TouchableOpacity>
       </View>
-
       <ScrollView className="px-4 pt-4">
         <View className="items-center mb-6">
           <Image
-            source={{ uri: 'https://via.placeholder.com/150' }}
+            source={{ uri: user?.profile_picture || 'https://via.placeholder.com/150' }}
             className="w-24 h-24 rounded-full mb-2 border-4 border-[#5B2EFF]"
           />
           <Text className="text-white text-lg font-semibold">{user?.user_name || 'Anonymous'}</Text>
           <Text className="text-gray-400 text-sm">{user?.gender || 'Gender not set'}</Text>
         </View>
-
         <View className="bg-[#2E2E4D] rounded-xl p-4 mb-6">
           <Text className="text-white font-semibold mb-1">About me</Text>
           <Text className="text-gray-300">{user?.bio || 'No bio set'}</Text>
         </View>
-
-        <View className="flex-col gap-4 mb-6">
-          <Option icon="cloud-outline" label="Account Backup" onPress={() => handleOptionPress('Account Backup')} />
-          <Option icon="help-circle-outline" label="Support" onPress={() => handleOptionPress('Support')} />
-          <Option
-            icon="notifications-outline"
-            label="Notifications & Sounds"
-            onPress={() => handleOptionPress('Notifications & Sounds')}
-          />
-          <Option icon="moon-outline" label="Appearance" onPress={() => handleOptionPress('Appearance')} />
-          <Option
-            icon="chatbox-ellipses-outline"
-            label="Chat Options"
-            onPress={() => handleOptionPress('Chat Options')}
-          />
+        <View className="flex-col gap-3 mb-6">
+          <Option icon="notifications-outline" label="Notifications" onPress={() => handleOptionPress('Notifications')} />
+          <Option icon="lock-closed-outline" label="Privacy" onPress={() => handleOptionPress('Privacy')} />
+          <Option icon="language-outline" label="Language" onPress={() => handleOptionPress('Language')} />
+          <Option icon="color-palette-outline" label="Theme" onPress={() => handleOptionPress('Theme')} />
         </View>
-
         <TouchableOpacity
-          onPress={() => {
-            log('Opening delete modal');
-            setDeleteModalVisible(true);
-          }}
+          onPress={() => setDeleteModalVisible(true)}
           disabled={isDeleting}
-          className={`py-4 rounded-xl mb-10 items-center ${isDeleting ? 'bg-red-400' : 'bg-red-600'}`}
+          className={`bg-red-600 rounded-xl p-4 flex-row items-center justify-center ${isDeleting ? 'opacity-50' : ''}`}
         >
-          <Text className="text-white font-semibold text-base">
-            {isDeleting ? 'Deleting...' : 'Clear Data & Delete Account'}
-          </Text>
+          <Ionicons name="trash-outline" size={24} color="white" />
+          <Text className="text-white text-base font-semibold ml-3">Delete Account</Text>
         </TouchableOpacity>
+        <View className="h-20" />
       </ScrollView>
-
       <Modal
         visible={isDeleteModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          if (!isDeleting) {
-            log('Delete modal cancelled');
-            setDeleteModalVisible(false);
-          }
-        }}
+        onRequestClose={() => setDeleteModalVisible(false)}
       >
         <View className="flex-1 justify-center items-center bg-black/50 px-6">
           <View className="bg-[#2E2E4D] rounded-xl p-6 w-full max-w-md">
-            <Text className="text-white text-lg font-semibold mb-3">Confirm Deletion</Text>
+            <Text className="text-white text-lg font-semibold mb-3">Delete Account</Text>
             <Text className="text-gray-300 mb-5">
-              Are you sure you want to delete your account? This action cannot be undone.
+              Are you sure you want to delete your account? This action is permanent and cannot be undone.
             </Text>
             <View className="flex-row justify-between">
               <TouchableOpacity
-                onPress={() => {
-                  log('Delete modal cancelled');
-                  setIsDeleting(false);
-                  setDeleteModalVisible(false);
-                }}
-                disabled={isDeleting}
-                className="bg-gray-600 px-6 py-2 rounded-xl"
+                onPress={() => setDeleteModalVisible(false)}
+                className="bg-gray-500 py-2 px-4 rounded-xl flex-1 mr-2 items-center"
               >
-                <Text className="text-white font-semibold">Cancel</Text>
+                <Text className="text-white font-medium">Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleDeleteAccount}
                 disabled={isDeleting}
-                className={`px-6 py-2 rounded-xl ${isDeleting ? 'bg-red-400' : 'bg-red-600'}`}
+                className={`bg-red-600 py-2 px-4 rounded-xl flex-1 ml-2 items-center ${isDeleting ? 'opacity-50' : ''}`}
               >
-                <Text className="text-white font-semibold">{isDeleting ? 'Deleting...' : 'Delete'}</Text>
+                <Text className="text-white font-medium">{isDeleting ? 'Deleting...' : 'Delete'}</Text>
               </TouchableOpacity>
             </View>
           </View>

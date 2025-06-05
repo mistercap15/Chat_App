@@ -1,25 +1,25 @@
-import { useTheme } from "@/context/ThemeContext";
-import { Stack, useRouter } from "expo-router";
-import ThemedLayout from "@/components/ThemedLayout";
-import useSocketStore from "@/store/useSocketStore";
-import { useEffect } from "react";
+// src/components/HomeLayout.tsx
+import { useTheme } from '@/context/ThemeContext';
+import { Stack, useRouter } from 'expo-router';
+import ThemedLayout from '@/components/ThemedLayout';
+import { useEffect } from 'react';
+import useRandomChatStore from '@/store/useRandomChatStore';
 
 export default function HomeLayout() {
   const { isDarkMode } = useTheme();
-  const { randomPartnerId } = useSocketStore();
+  const { partnerId } = useRandomChatStore();
   const router = useRouter();
 
-  const headerBg = isDarkMode ? "#1f2937" : "#fff7ed";
-  const headerText = isDarkMode ? "#facc15" : "#92400e";
-  const bgColor = isDarkMode ? "#000" : "#fff7ed";
+  const headerBg = isDarkMode ? '#1f2937' : '#fff7ed';
+  const headerText = isDarkMode ? '#facc15' : '#92400e';
+  const bgColor = isDarkMode ? '#000' : '#fff7ed';
 
-  // Redirect to random chat only if a random match is found (randomPartnerId exists)
   useEffect(() => {
-    if (randomPartnerId) {
-      console.log(`[${new Date().toISOString()}] HomeLayout: Active random chat detected, redirecting to chat`, { randomPartnerId });
+    if (partnerId) {
+      console.log(`[${new Date().toISOString()}] HomeLayout: Active random chat detected, redirecting to chat`, { partnerId });
       router.replace('/(tabs)/home/chat');
     }
-  }, [randomPartnerId, router]);
+  }, [partnerId, router]);
 
   return (
     <ThemedLayout>
@@ -28,24 +28,14 @@ export default function HomeLayout() {
           headerStyle: { backgroundColor: headerBg },
           headerTitleStyle: { color: headerText },
           headerTintColor: headerText,
-          animation: "ios_from_right",
-          headerTitleAlign: "center",
+          animation: 'ios_from_right',
+          headerTitleAlign: 'center',
           contentStyle: { backgroundColor: bgColor },
           gestureEnabled: false,
         }}
       >
-        <Stack.Screen
-          name="index"
-          options={{ title: "Home", headerShown: false }}
-        />
-        <Stack.Screen
-          name="chat"
-          options={{ 
-            title: "Chat", 
-            headerShown: false,
-            gestureEnabled: false,
-          }}
-        />
+        <Stack.Screen name="index" options={{ title: 'Home', headerShown: false }} />
+        <Stack.Screen name="chat" options={{ title: 'Chat', headerShown: false, gestureEnabled: false }} />
       </Stack>
     </ThemedLayout>
   );

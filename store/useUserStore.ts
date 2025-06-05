@@ -18,7 +18,6 @@ interface UserStore {
   isRegistered: () => boolean;
 }
 
-// Custom AsyncStorage wrapper for Zustand
 const asyncStorage: PersistStorage<UserStore> = {
   getItem: async (key) => {
     const value = await AsyncStorage.getItem(key);
@@ -40,10 +39,7 @@ const useUserStore = create<UserStore>()(
       clearUser: () => set({ user: null }),
       isRegistered: () => !!get().user,
     }),
-    {
-      name: 'user-storage',
-      storage: asyncStorage,
-    }
+    { name: 'user-storage', storage: asyncStorage }
   )
 );
 
