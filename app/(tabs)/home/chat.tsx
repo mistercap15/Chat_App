@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,28 +9,28 @@ import {
   Platform,
   Modal,
   BackHandler,
-} from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import moment from 'moment';
-import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import Toast from 'react-native-toast-message';
-import useSocketStore from '@/store/useSocketStore';
-import useUserStore from '@/store/useUserStore';
-import useRandomChatStore from '@/store/useRandomChatStore';
-import useFriendRequestStore from '@/store/useFriendRequestStore';
-import api from '@/utils/api';
+} from "react-native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import moment from "moment";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import Toast from "react-native-toast-message";
+import useSocketStore from "@/store/useSocketStore";
+import useUserStore from "@/store/useUserStore";
+import useRandomChatStore from "@/store/useRandomChatStore";
+import useFriendRequestStore from "@/store/useFriendRequestStore";
+import api from "@/utils/api";
 
 interface Message {
   text: string;
-  sender: 'user' | 'partner' | 'system';
+  sender: "user" | "partner" | "system";
   timestamp: number;
   seen?: boolean;
-  type?: 'friendRequestSent' | 'friendRequestReceived' | 'system';
+  type?: "friendRequestSent" | "friendRequestReceived" | "system";
 }
 
 const Chat = () => {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
@@ -39,12 +39,14 @@ const Chat = () => {
   const [isPartnerInfoVisible, setIsPartnerInfoVisible] = useState(true);
   const [showExtraButtons, setShowExtraButtons] = useState(false);
   const [chatEnded, setChatEnded] = useState(false);
+  const [partnerBio, setPartnerBio] = useState<string | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const isChatInitialized = useRef(false);
   const isMounted = useRef(true);
   const hasJoinedRoom = useRef(false);
   const isIntentionallyLeaving = useRef(false);
+  const isInitialMount = useRef(true); // New flag to prevent modal on initial mount
 
   const { socket, connectionStatus } = useSocketStore();
   const { user } = useUserStore();
@@ -65,37 +67,36 @@ const Chat = () => {
   } = useRandomChatStore();
   const { sendFriendRequest, acceptFriendRequest, rejectFriendRequest } = useFriendRequestStore();
   const navigation = useNavigation();
-const [partnerBio, setPartnerBio] = useState<string | null>(null);
 
-// Add useEffect to fetch partner bio when partnerId changes
-useEffect(() => {
-  if (!partnerId) {
-    setPartnerBio(null);
-    return;
-  }
-
-  const fetchPartnerBio = async () => {
-    try {
-      log('Fetching partner bio', { partnerId });
-      const response = await api.get(`/api/users/${partnerId}`);
-      const { bio, gender } = response.data;
-      setPartnerBio(bio || 'No bio available');
-      log('Partner bio fetched', { bio, gender });
-    } catch (error: any) {
-      log('Error fetching partner bio', { error: error.message });
-      setPartnerBio('No bio available');
+  // Fetch partner bio when partnerId changes
+  useEffect(() => {
+    if (!partnerId) {
+      setPartnerBio(null);
+      return;
     }
-  };
 
-  fetchPartnerBio();
-}, [partnerId]);
+    const fetchPartnerBio = async () => {
+      try {
+        log("Fetching partner bio", { partnerId });
+        const response = await api.get(`/api/users/${partnerId}`);
+        const { bio, gender } = response.data;
+        setPartnerBio(bio || "No bio available");
+        log("Partner bio fetched", { bio, gender });
+      } catch (error: any) {
+        log("Error fetching partner bio", { error: error.message });
+        setPartnerBio("No bio available");
+      }
+    };
+
+    fetchPartnerBio();
+  }, [partnerId]);
 
   const TYPING_TIMEOUT = 3000;
   const DISCONNECT_GRACE_PERIOD = 60000;
   const DEDUPE_WINDOW = 1000;
 
   const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Chat: ${message}`, data || '');
+    console.log(`[${new Date().toISOString()}] Chat: ${message}`, data || "");
   };
 
   const navigateToFriends = useCallback(
@@ -108,14 +109,57 @@ useEffect(() => {
       hasJoinedRoom.current = false;
       isChatInitialized.current = false;
       setChatEnded(true);
-      router.replace('/(tabs)/friends');
+      router.replace("/(tabs)/friends");
     },
     [reset]
   );
 
+  const navigateToHome = useCallback(
+    (skipModal = false) => {
+      if (!isMounted.current) return;
+      if (!skipModal) setLeaveConfirmVisible(false);
+      setMessages([]);
+      reset();
+      isIntentionallyLeaving.current = true;
+      hasJoinedRoom.current = false;
+      isChatInitialized.current = false;
+      setChatEnded(true);
+      router.replace("/(tabs)/home");
+    },
+    [reset]
+  );
+
+  // Intercept navigation attempts
   useEffect(() => {
-    log('Chat component mounted');
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      // Skip on initial mount to prevent modal from showing when chat starts
+      if (isInitialMount.current) {
+        log("Skipping beforeRemove on initial mount");
+        isInitialMount.current = false;
+        return;
+      }
+      if (!isMounted.current || chatEnded || friendRequestAccepted || isIntentionallyLeaving.current) {
+        log("Navigation allowed", {
+          chatEnded,
+          friendRequestAccepted,
+          isIntentionallyLeaving: isIntentionallyLeaving.current,
+          action: e.data.action,
+        });
+        return;
+      }
+      // Prevent navigation if chat is active
+      e.preventDefault();
+      log("Navigation blocked, showing leave confirmation", { action: e.data.action });
+      setLeaveConfirmVisible(true);
+    });
+
+    return unsubscribe;
+  }, [navigation, chatEnded, friendRequestAccepted]);
+
+  useEffect(() => {
+    log("Chat component mounted");
     isMounted.current = true;
+    isInitialMount.current = true; // Set initial mount flag
     const cleanup = initializeListeners(socket);
 
     socket?.onAnyOutgoing((event: any, ...args: any) => {
@@ -123,24 +167,26 @@ useEffect(() => {
     });
 
     const chatReadyListener = () => {
-      log('Chat ready confirmed');
+      log("Chat ready confirmed");
       isChatInitialized.current = true;
+      isInitialMount.current = false; // Reset after chat is initialized
     };
 
-    socket?.on('chat_ready', chatReadyListener);
+    socket?.on("chat_ready", chatReadyListener);
 
     return () => {
-      log('Chat component unmounted');
+      log("Chat component unmounted");
       isMounted.current = false;
+      isInitialMount.current = false;
       cleanup();
       socket?.offAnyOutgoing();
-      socket?.off('chat_ready', chatReadyListener);
+      socket?.off("chat_ready", chatReadyListener);
     };
   }, [socket, initializeListeners]);
 
   useEffect(() => {
     if (friendRequestAccepted) {
-      log('Friend request accepted, navigating to friends list');
+      log("Friend request accepted, navigating to friends list");
       navigateToFriends(true);
       setFriendRequestAccepted(false);
     }
@@ -150,10 +196,10 @@ useEffect(() => {
     useCallback(() => {
       if (!partnerId || !partnerName || !user?._id || !socket?.connected) {
         if (friendRequestAccepted) {
-          log('Friend request accepted, skipping home navigation');
+          log("Friend request accepted, skipping home navigation");
           return;
         }
-        log('Invalid chat state, navigating to home', {
+        log("Invalid chat state, navigating to home", {
           partnerId,
           partnerName,
           userId: user?._id,
@@ -164,16 +210,16 @@ useEffect(() => {
       }
 
       if (!hasJoinedRoom.current) {
-        const roomId = [user._id, partnerId].sort().join('-');
-        log('Joining room', { roomId, userId: user._id, partnerId });
-        socket.emit('join_room', { roomId, userId: user._id });
+        const roomId = [user._id, partnerId].sort().join("-");
+        log("Joining room", { roomId, userId: user._id, partnerId });
+        socket.emit("join_room", { roomId, userId: user._id });
         hasJoinedRoom.current = true;
       }
 
       return () => {
         if (isIntentionallyLeaving.current && !leaveConfirmVisible && socket?.connected && partnerId && !chatEnded) {
-          log('Leaving chat room', { partnerId });
-          socket.emit('leave_chat', { toUserId: partnerId });
+          log("Leaving chat room", { partnerId });
+          socket.emit("leave_chat", { toUserId: partnerId });
         }
       };
     }, [partnerId, partnerName, user?._id, socket, leaveConfirmVisible, chatEnded, friendRequestAccepted])
@@ -192,28 +238,28 @@ useEffect(() => {
       timestamp: number;
     }) => {
       if (!isMounted.current) return;
-      log('Received message event', { message, fromUserId, timestamp, partnerId, chatEnded });
+      log("Received message event", { message, fromUserId, timestamp, partnerId, chatEnded });
       if (fromUserId === partnerId && isChatInitialized.current) {
         setMessages((prev): any => {
           const recentMessages = prev.filter((msg) => Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW);
-          if (recentMessages.some((msg) => msg.text === message && msg.sender === 'partner')) {
-            log('Duplicate message ignored', { message, timestamp });
+          if (recentMessages.some((msg) => msg.text === message && msg.sender === "partner")) {
+            log("Duplicate message ignored", { message, timestamp });
             return prev;
           }
-          const newMessage = { text: message, sender: 'partner', timestamp, seen: false };
-          log('Adding message to state', newMessage);
+          const newMessage = { text: message, sender: "partner", timestamp, seen: false };
+          log("Adding message to state", newMessage);
           flatListRef.current?.scrollToEnd({ animated: true });
           return [...prev, newMessage];
         });
         emitMessageSeen(socket, timestamp);
       } else {
-        log('Message ignored', { reason: fromUserId === partnerId ? 'Not initialized' : 'Invalid sender', fromUserId });
+        log("Message ignored", { reason: fromUserId === partnerId ? "Not initialized" : "Invalid sender", fromUserId });
       }
     };
 
     const partnerDisconnectedListener = ({ disconnectedUserId }: { disconnectedUserId: string }) => {
       if (!isMounted.current || disconnectedUserId !== partnerId || !isChatInitialized.current || chatEnded) {
-        log('Ignoring partner_disconnected event', {
+        log("Ignoring partner_disconnected event", {
           disconnectedUserId,
           partnerId,
           isChatInitialized: isChatInitialized.current,
@@ -223,19 +269,19 @@ useEffect(() => {
       }
       const now = Date.now();
       if (lastDisconnectTime && now - lastDisconnectTime < DISCONNECT_GRACE_PERIOD) {
-        log('Ignoring duplicate disconnect event', { disconnectedUserId, lastDisconnectTime });
+        log("Ignoring duplicate disconnect event", { disconnectedUserId, lastDisconnectTime });
         return;
       }
-      log('Partner disconnected', { disconnectedUserId });
+      log("Partner disconnected", { disconnectedUserId });
       setLastDisconnectTime(now);
       setChatEnded(true);
       setMessages((prev) => [
         ...prev,
         {
-          text: 'User has disconnected',
-          sender: 'system',
+          text: "User has disconnected",
+          sender: "system",
           timestamp: Date.now(),
-          type: 'system',
+          type: "system",
         },
       ]);
       flatListRef.current?.scrollToEnd({ animated: true });
@@ -243,20 +289,20 @@ useEffect(() => {
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
-      log('Message seen', { fromUserId, timestamp });
+      log("Message seen", { fromUserId, timestamp });
       setMessages((prev) =>
-        prev.map((msg) => (msg.sender === 'user' && msg.timestamp === timestamp ? { ...msg, seen: true } : msg))
+        prev.map((msg) => (msg.sender === "user" && msg.timestamp === timestamp ? { ...msg, seen: true } : msg))
       );
     };
 
-    socket.on('receive_message', messageListener);
-    socket.on('partner_disconnected', partnerDisconnectedListener);
-    socket.on('message_seen', messageSeenListener);
+    socket.on("receive_message", messageListener);
+    socket.on("partner_disconnected", partnerDisconnectedListener);
+    socket.on("message_seen", messageSeenListener);
 
     return () => {
-      socket.off('receive_message', messageListener);
-      socket.off('partner_disconnected', partnerDisconnectedListener);
-      socket.off('message_seen', messageSeenListener);
+      socket.off("receive_message", messageListener);
+      socket.off("partner_disconnected", partnerDisconnectedListener);
+      socket.off("message_seen", messageSeenListener);
     };
   }, [socket, partnerId, user?._id, emitMessageSeen, chatEnded]);
 
@@ -269,19 +315,19 @@ useEffect(() => {
 
   useEffect(() => {
     if (friendRequest && isMounted.current && isChatInitialized.current && !chatEnded) {
-      log('Friend request received, adding to messages', { friendRequest });
+      log("Friend request received, adding to messages", { friendRequest });
       setMessages((prev) => {
-        if (prev.some((msg) => msg.type === 'friendRequestReceived' && msg.sender === 'partner')) {
-          log('Duplicate friend request message ignored');
+        if (prev.some((msg) => msg.type === "friendRequestReceived" && msg.sender === "partner")) {
+          log("Duplicate friend request message ignored");
           return prev;
         }
         return [
           ...prev,
           {
             text: `${friendRequest.fromUsername} sent you a friend request!`,
-            sender: 'partner',
+            sender: "partner",
             timestamp: Date.now(),
-            type: 'friendRequestReceived',
+            type: "friendRequestReceived",
           },
         ];
       });
@@ -291,7 +337,7 @@ useEffect(() => {
 
   useFocusEffect(
     useCallback(() => {
-      const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
         if (chatEnded) return false;
         setLeaveConfirmVisible(true);
         return true;
@@ -311,52 +357,37 @@ useEffect(() => {
     typingTimeoutRef.current = setTimeout(() => setLastTypingTime(null), TYPING_TIMEOUT);
   }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, chatEnded]);
 
-  const navigateToHome = useCallback(
-    (skipModal = false) => {
-      if (!isMounted.current) return;
-      if (!skipModal) setLeaveConfirmVisible(false);
-      setMessages([]);
-      reset();
-      isIntentionallyLeaving.current = true;
-      hasJoinedRoom.current = false;
-      isChatInitialized.current = false;
-      setChatEnded(true);
-      router.replace('/(tabs)/home');
-    },
-    [reset]
-  );
-
   const sendMessage = async () => {
     if (isSending || chatEnded || !isChatInitialized.current) {
-      log('Send message blocked', { isSending, chatEnded, isChatInitialized: isChatInitialized.current });
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Cannot send message.' });
+      log("Send message blocked", { isSending, chatEnded, isChatInitialized: isChatInitialized.current });
+      Toast.show({ type: "error", text1: "Error", text2: "Cannot send message." });
       return;
     }
     setIsSending(true);
     if (!input.trim()) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Message cannot be empty.' });
+      Toast.show({ type: "error", text1: "Error", text2: "Message cannot be empty." });
       setIsSending(false);
       return;
     }
     if (!user?._id || !partnerId || !socket?.connected) {
-      log('Invalid state for sending message', { userId: user?._id, partnerId, socketConnected: socket?.connected });
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Chat is not properly initialized.' });
+      log("Invalid state for sending message", { userId: user?._id, partnerId, socketConnected: socket?.connected });
+      Toast.show({ type: "error", text1: "Error", text2: "Chat is not properly initialized." });
       setIsSending(false);
       return;
     }
     const timestamp = Date.now();
-    const newMessage = { text: input, sender: 'user', timestamp, seen: false };
+    const newMessage = { text: input, sender: "user", timestamp, seen: false };
     setMessages((prev): any => [...prev, newMessage]);
-    setInput('');
+    setInput("");
     flatListRef.current?.scrollToEnd({ animated: true });
 
     try {
-      log('Emitting send_message', { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
-      socket.emit('send_message', { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
+      log("Emitting send_message", { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
+      socket.emit("send_message", { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
     } catch (error: any) {
-      log('Error sending message', { error: error.message });
+      log("Error sending message", { error: error.message });
       setMessages((prev) => prev.filter((msg) => msg.timestamp !== timestamp));
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to send message.' });
+      Toast.show({ type: "error", text1: "Error", text2: "Failed to send message." });
     } finally {
       setIsSending(false);
     }
@@ -369,11 +400,11 @@ useEffect(() => {
     setMessages((prev) => [
       ...prev,
       {
-        text: 'Friend request sent!',
-        sender: 'user',
+        text: "Friend request sent!",
+        sender: "user",
         timestamp: Date.now(),
         seen: false,
-        type: 'friendRequestSent',
+        type: "friendRequestSent",
       },
     ]);
   };
@@ -388,7 +419,7 @@ useEffect(() => {
     if (!user?._id || !partnerId) return;
     await rejectFriendRequest(partnerId);
     setMessages((prev) =>
-      prev.map((msg) => (msg.timestamp === timestamp ? { ...msg, text: 'Friend request rejected.' } : msg))
+      prev.map((msg) => (msg.timestamp === timestamp ? { ...msg, text: "Friend request rejected." } : msg))
     );
   };
 
@@ -396,31 +427,31 @@ useEffect(() => {
     if (!isMounted.current || chatEnded) return;
     isIntentionallyLeaving.current = true;
     if (socket?.connected && partnerId) {
-      log('Emitting leave_chat', { toUserId: partnerId });
-      socket.emit('leave_chat', { toUserId: partnerId });
+      log("Emitting leave_chat", { toUserId: partnerId });
+      socket.emit("leave_chat", { toUserId: partnerId });
     }
     setChatEnded(true);
     setMessages((prev) => [
       ...prev,
       {
-        text: 'You have left the chat',
-        sender: 'system',
+        text: "You have left the chat",
+        sender: "system",
         timestamp: Date.now(),
-        type: 'system',
+        type: "system",
       },
     ]);
     setLeaveConfirmVisible(false);
     flatListRef.current?.scrollToEnd({ animated: true });
-  }, [socket, partnerId]);
+    navigateToHome(true);
+  }, [socket, partnerId, navigateToHome]);
 
   const handleCancelLeave = useCallback(() => {
-    log('Leave confirmation cancelled');
+    log("Leave confirmation cancelled");
     setLeaveConfirmVisible(false);
   }, []);
 
   const handleNewPartner = () => {
     handleLeaveChat();
-    navigateToHome(true);
   };
 
   const toggleExtraButtons = () => {
@@ -428,16 +459,16 @@ useEffect(() => {
   };
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isUser = item.sender === 'user';
-    const isSystem = item.sender === 'system';
-    if (isSystem || item.type === 'friendRequestSent') {
+    const isUser = item.sender === "user";
+    const isSystem = item.sender === "system";
+    if (isSystem || item.type === "friendRequestSent") {
       return (
         <View className="my-2 self-center bg-[#2E2E4D] rounded-lg px-4 py-2">
           <Text className="text-gray-300 text-sm">{item.text}</Text>
         </View>
       );
     }
-    if (item.type === 'friendRequestReceived') {
+    if (item.type === "friendRequestReceived") {
       return (
         <View className="my-2 self-center bg-[#2E2E4D] rounded-lg px-4 py-2">
           <Text className="text-gray-300 text-sm mb-2">{item.text}</Text>
@@ -461,37 +492,37 @@ useEffect(() => {
       );
     }
     return (
-      <View className={`my-2 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
-        <View className={`px-4 py-3 rounded-2xl shadow-sm ${isUser ? 'bg-indigo-600' : 'bg-[#2E2E4D]'}`}>
+      <View className={`my-2 max-w-[75%] ${isUser ? "self-end" : "self-start"}`}>
+        <View className={`px-4 py-3 rounded-2xl shadow-sm ${isUser ? "bg-indigo-600" : "bg-[#2E2E4D]"}`}>
           <Text className="text-white text-base leading-5">{item.text}</Text>
         </View>
         <View className="flex-row justify-between mt-1">
-          <Text className="text-xs text-gray-400">{moment(item.timestamp).format('h:mm A')}</Text>
+          <Text className="text-xs text-gray-400">{moment(item.timestamp).format("h:mm A")}</Text>
           {isUser && item.seen && <Text className="text-xs text-green-400">Seen</Text>}
         </View>
       </View>
     );
   };
 
-  const isSendFriendRequestDisabled: any =
+  const isSendFriendRequestDisabled:any =
     !partnerId ||
-    connectionStatus === 'disconnected' ||
+    connectionStatus === "disconnected" ||
     chatEnded ||
     (friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId));
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View className="flex-1 bg-[#1C1C3A] px-4 pt-10">
         <View className="flex-row items-center justify-between mb-4">
-          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)} disabled={chatEnded}>
-            <Ionicons name="chevron-back" size={28} color={chatEnded ? '#A0A0A0' : '#5B2EFF'} />
+          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)} >
+            <Ionicons name="chevron-back" size={28} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
           </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">{partnerName || 'Anonymous'}</Text>
+          <Text className="text-white text-lg font-semibold">{partnerName || "Anonymous"}</Text>
           <TouchableOpacity onPress={toggleExtraButtons} disabled={chatEnded}>
             <Ionicons
               name="ellipsis-vertical"
               size={24}
-              color={showExtraButtons && !chatEnded ? '#5B2EFF' : '#A0A0A0'}
+              color={showExtraButtons && !chatEnded ? "#5B2EFF" : "#A0A0A0"}
             />
           </TouchableOpacity>
         </View>
@@ -502,7 +533,7 @@ useEffect(() => {
         >
           <Text className="text-white text-sm font-semibold">About partner</Text>
           <Ionicons
-            name={isPartnerInfoVisible ? 'chevron-up' : 'chevron-down'}
+            name={isPartnerInfoVisible ? "chevron-up" : "chevron-down"}
             size={16}
             color="#A0A0A0"
             className="ml-2"
@@ -510,7 +541,7 @@ useEffect(() => {
         </TouchableOpacity>
         {isPartnerInfoVisible && (
           <View className="self-center bg-[#2E2E4D] rounded-lg px-4 py-2 mb-4">
-            <Text className="text-gray-300 text-sm">{partnerBio || 'Loading...'}</Text>
+            <Text className  ="text-gray-300 text-sm">{partnerBio || "Loading..."}</Text>
           </View>
         )}
         <FlatList
@@ -531,7 +562,7 @@ useEffect(() => {
         <View className="mb-4">
           <View className="flex-row items-center bg-[#2E2E4D] rounded-full p-2 shadow-sm">
             <TouchableOpacity className="p-2" disabled={chatEnded}>
-              <Ionicons name="camera-outline" size={24} color={chatEnded ? '#A0A0A0' : '#5B2EFF'} />
+              <Ionicons name="camera-outline" size={24} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
             </TouchableOpacity>
             <TextInput
               value={input}
@@ -542,16 +573,16 @@ useEffect(() => {
               placeholder="Write a message..."
               placeholderTextColor="#A0A0A0"
               className="flex-1 text-white px-3 text-base"
-              editable={connectionStatus !== 'disconnected' && !chatEnded}
+              editable={connectionStatus !== "disconnected" && !chatEnded}
             />
             <TouchableOpacity
               onPress={sendMessage}
-              disabled={isSending || connectionStatus === 'disconnected' || !input.trim() || chatEnded}
+              disabled={isSending || connectionStatus === "disconnected" || !input.trim() || chatEnded}
               className={`p-2 ${
-                isSending || connectionStatus === 'disconnected' || !input.trim() || chatEnded ? 'opacity-50' : ''
+                isSending || connectionStatus === "disconnected" || !input.trim() || chatEnded ? "opacity-50" : ""
               }`}
             >
-              <Ionicons name="send" size={24} color={chatEnded ? '#A0A0A0' : '#5B2EFF'} />
+              <Ionicons name="send" size={24} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
             </TouchableOpacity>
           </View>
           {showExtraButtons && (
@@ -560,7 +591,7 @@ useEffect(() => {
                 onPress={handleSendFriendRequest}
                 disabled={isSendFriendRequestDisabled}
                 className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  isSendFriendRequestDisabled ? 'bg-gray-600 opacity-50' : 'bg-indigo-600'
+                  isSendFriendRequestDisabled ? "bg-gray-600 opacity-50" : "bg-indigo-600"
                 }`}
               >
                 <Ionicons name="person-add-outline" size={20} color="white" className="mr-2" />
@@ -570,7 +601,7 @@ useEffect(() => {
                 onPress={() => setLeaveConfirmVisible(true)}
                 disabled={chatEnded}
                 className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  chatEnded ? 'bg-gray-600 opacity-50' : 'bg-red-600'
+                  chatEnded ? "bg-gray-600 opacity-50" : "bg-red-600"
                 }`}
               >
                 <Ionicons name="close-circle-outline" size={20} color="white" className="mr-2" />
@@ -580,10 +611,10 @@ useEffect(() => {
                 onPress={handleNewPartner}
                 disabled={chatEnded}
                 className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  chatEnded ? 'bg-gray-600 opacity-50' : 'bg-[#2E2E4D]'
+                  chatEnded ? "bg-gray-600 opacity-50" : "bg-[#2E2E4D]"
                 }`}
               >
-                <Ionicons name="refresh-outline" size={20} color={chatEnded ? '#A0A0A0' : '#5B2EFF'} className="mr-2" />
+                <Ionicons name="refresh-outline" size={20} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} className="mr-2" />
                 <Text className="text-white text-base font-semibold">New Partner</Text>
               </TouchableOpacity>
             </View>
