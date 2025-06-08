@@ -46,7 +46,7 @@ const Chat = () => {
   const isMounted = useRef(true);
   const hasJoinedRoom = useRef(false);
   const isIntentionallyLeaving = useRef(false);
-  const isInitialMount = useRef(true); // New flag to prevent modal on initial mount
+  const isInitialMount = useRef(true);
 
   const { socket, connectionStatus } = useSocketStore();
   const { user } = useUserStore();
@@ -68,7 +68,6 @@ const Chat = () => {
   const { sendFriendRequest, acceptFriendRequest, rejectFriendRequest } = useFriendRequestStore();
   const navigation = useNavigation();
 
-  // Fetch partner bio when partnerId changes
   useEffect(() => {
     if (!partnerId) {
       setPartnerBio(null);
@@ -129,10 +128,8 @@ const Chat = () => {
     [reset]
   );
 
-  // Intercept navigation attempts
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-      // Skip on initial mount to prevent modal from showing when chat starts
       if (isInitialMount.current) {
         log("Skipping beforeRemove on initial mount");
         isInitialMount.current = false;
@@ -147,7 +144,6 @@ const Chat = () => {
         });
         return;
       }
-      // Prevent navigation if chat is active
       e.preventDefault();
       log("Navigation blocked, showing leave confirmation", { action: e.data.action });
       setLeaveConfirmVisible(true);
@@ -159,7 +155,7 @@ const Chat = () => {
   useEffect(() => {
     log("Chat component mounted");
     isMounted.current = true;
-    isInitialMount.current = true; // Set initial mount flag
+    isInitialMount.current = true;
     const cleanup = initializeListeners(socket);
 
     socket?.onAnyOutgoing((event: any, ...args: any) => {
@@ -169,7 +165,7 @@ const Chat = () => {
     const chatReadyListener = () => {
       log("Chat ready confirmed");
       isChatInitialized.current = true;
-      isInitialMount.current = false; // Reset after chat is initialized
+      isInitialMount.current = false;
     };
 
     socket?.on("chat_ready", chatReadyListener);
@@ -417,10 +413,23 @@ const Chat = () => {
 
   const handleRejectFriendRequest = async (timestamp: number) => {
     if (!user?._id || !partnerId) return;
-    await rejectFriendRequest(partnerId);
-    setMessages((prev) =>
-      prev.map((msg) => (msg.timestamp === timestamp ? { ...msg, text: "Friend request rejected." } : msg))
-    );
+    try {
+      await rejectFriendRequest(partnerId);
+      // Remove the friend request message instead of updating it
+      setMessages((prev) =>
+        prev.filter((msg) => !(msg.type === "friendRequestReceived" && msg.timestamp === timestamp))
+      );
+      // Notify both users of the rejection
+      socket?.emit("friend_request_rejected", {
+        fromUserId: partnerId,
+        toUserId: user._id,
+      });
+      log("Friend request rejected and notification emitted", { partnerId, timestamp });
+      Toast.show({ type: "success", text1: "Request Rejected", text2: "Friend request rejected." });
+    } catch (error: any) {
+      log("Error rejecting friend request", { error: error.message });
+      Toast.show({ type: "error", text1: "Error", text2: "Failed to reject friend request." });
+    }
   };
 
   const handleLeaveChat = useCallback(() => {
@@ -508,13 +517,14 @@ const Chat = () => {
     !partnerId ||
     connectionStatus === "disconnected" ||
     chatEnded ||
-    (friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId));
+    (friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId)) ||
+    (friendRequest && friendRequest.fromUserId === partnerId);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View className="flex-1 bg-[#1C1C3A] px-4 pt-10">
         <View className="flex-row items-center justify-between mb-4">
-          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)} >
+          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)}>
             <Ionicons name="chevron-back" size={28} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
           </TouchableOpacity>
           <Text className="text-white text-lg font-semibold">{partnerName || "Anonymous"}</Text>
@@ -541,7 +551,7 @@ const Chat = () => {
         </TouchableOpacity>
         {isPartnerInfoVisible && (
           <View className="self-center bg-[#2E2E4D] rounded-lg px-4 py-2 mb-4">
-            <Text className  ="text-gray-300 text-sm">{partnerBio || "Loading..."}</Text>
+            <Text className="text-gray-300 text-sm">{partnerBio || "Loading..."}</Text>
           </View>
         )}
         <FlatList

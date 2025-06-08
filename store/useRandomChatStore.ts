@@ -112,17 +112,30 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
       console.log(`[${new Date().toISOString()}] handleFriendRequestAccepted: Friend request accepted`);
       set({ friendRequestSent: null, friendRequest: null, friendRequestAccepted: true });
     };
+    const handleFriendRequestRejected = ({ fromUserId, toUserId }: { fromUserId: string; toUserId: string }) => {
+      console.log(`[${new Date().toISOString()}] handleFriendRequestRejected: Friend request rejected`, {
+        fromUserId,
+        toUserId,
+        partnerId: get().partnerId,
+      });
+      if (fromUserId === get().partnerId || toUserId === get().partnerId) {
+        set({ friendRequest: null, friendRequestSent: null });
+        Toast.show({ type: 'info', text1: 'Friend Request', text2: 'Friend request was rejected.' });
+      }
+    };
 
     socket.on('partner_typing', handlePartnerTyping);
     socket.on('friend_request_received', handleFriendRequest);
     socket.on('friend_request_status', handleFriendRequestStatus);
     socket.on('friend_request_accepted', handleFriendRequestAccepted);
+    socket.on('friend_request_rejected', handleFriendRequestRejected);
 
     return () => {
       socket.off('partner_typing', handlePartnerTyping);
       socket.off('friend_request_received', handleFriendRequest);
       socket.off('friend_request_status', handleFriendRequestStatus);
       socket.off('friend_request_accepted', handleFriendRequestAccepted);
+      socket.off('friend_request_rejected', handleFriendRequestRejected);
     };
   },
 }));
