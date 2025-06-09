@@ -14,7 +14,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/splash.png",
+        "foregroundImage": "./assets/images/appIcon.png",
         "backgroundColor": "#1C1C3A"
       },
       "package": "com.khilanpatel15.ZuChat"
