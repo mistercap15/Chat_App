@@ -1,1 +1,1 @@
-export const BASE_URL = "https://2ad0-27-61-174-176.ngrok-free.app"
+export const BASE_URL = "https://chat-backend-wayx.onrender.com"
