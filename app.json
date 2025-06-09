@@ -9,13 +9,15 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.khilanpatel15.ZuChat"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/splash.png",
         "backgroundColor": "#1C1C3A"
-      }
+      },
+      "package": "com.khilanpatel15.ZuChat"
     },
     "web": {
       "bundler": "metro",
