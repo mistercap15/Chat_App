@@ -2,6 +2,9 @@
   "expo": {
     "name": "Zu Chat",
     "slug": "Zu Chat",
+    "permissions": [
+      "notifications"
+    ],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
@@ -10,9 +13,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.khilanpatel15.ZuChat"
+      "bundleIdentifier": "com.khilanpatel15.ZuChat",
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"]
+      }
     },
     "android": {
+      "permissions": ["RECEIVE_NOTIFICATIONS"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#1C1C3A"
