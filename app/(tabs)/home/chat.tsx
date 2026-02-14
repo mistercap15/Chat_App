@@ -35,6 +35,7 @@ const Chat = () => {
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isRequestProcessing, setIsRequestProcessing] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState<number | null>(null);
   const [isPartnerInfoVisible, setIsPartnerInfoVisible] = useState(true);
   const [showExtraButtons, setShowExtraButtons] = useState(false);
@@ -61,6 +62,8 @@ const Chat = () => {
     friendRequest,
     friendRequestSent,
     emitFriendRequestSent,
+    clearFriendRequestSent,
+    clearIncomingFriendRequest,
     reset,
     setFriendRequestAccepted,
     initializeListeners,
@@ -390,46 +393,65 @@ const Chat = () => {
   };
 
   const handleSendFriendRequest = async () => {
-    if (!user?._id || !partnerId || chatEnded) return;
-    await sendFriendRequest(partnerId);
-    emitFriendRequestSent(socket);
-    setMessages((prev) => [
-      ...prev,
-      {
-        text: "Friend request sent!",
-        sender: "user",
-        timestamp: Date.now(),
-        seen: false,
-        type: "friendRequestSent",
-      },
-    ]);
+    if (!user?._id || !partnerId || chatEnded || isRequestProcessing) return;
+    setIsRequestProcessing(true);
+    const success = await sendFriendRequest(partnerId);
+
+    if (success) {
+      emitFriendRequestSent(socket);
+      clearIncomingFriendRequest();
+      setMessages((prev) => {
+        if (prev.some((msg) => msg.type === "friendRequestSent")) return prev;
+        return [
+          ...prev,
+          {
+            text: "Friend request sent!",
+            sender: "user",
+            timestamp: Date.now(),
+            seen: false,
+            type: "friendRequestSent",
+          },
+        ];
+      });
+    }
+
+    setIsRequestProcessing(false);
   };
 
   const handleAcceptFriendRequest = async (timestamp: number) => {
-    if (!user?._id || !partnerId) return;
-    await acceptFriendRequest(partnerId);
-    navigateToFriends(true);
+    if (!user?._id || !partnerId || isRequestProcessing) return;
+    setIsRequestProcessing(true);
+    const requestOwnerId = friendRequest?.fromUserId || partnerId;
+    const success = await acceptFriendRequest(requestOwnerId);
+
+    if (success) {
+      socket?.emit("friend_request_accepted", { userId: user._id, friendId: requestOwnerId });
+      clearIncomingFriendRequest();
+      clearFriendRequestSent();
+      navigateToFriends(true);
+    }
+
+    setIsRequestProcessing(false);
   };
 
   const handleRejectFriendRequest = async (timestamp: number) => {
-    if (!user?._id || !partnerId) return;
-    try {
-      await rejectFriendRequest(partnerId);
-      // Remove the friend request message instead of updating it
-      setMessages((prev) =>
-        prev.filter((msg) => !(msg.type === "friendRequestReceived" && msg.timestamp === timestamp))
-      );
-      // Notify both users of the rejection
+    if (!user?._id || !partnerId || isRequestProcessing) return;
+    setIsRequestProcessing(true);
+    const requestOwnerId = friendRequest?.fromUserId || partnerId;
+    const success = await rejectFriendRequest(requestOwnerId);
+
+    if (success) {
+      setMessages((prev) => prev.filter((msg) => !(msg.type === "friendRequestReceived" && msg.timestamp === timestamp)));
+      clearIncomingFriendRequest();
+      clearFriendRequestSent();
       socket?.emit("friend_request_rejected", {
-        fromUserId: partnerId,
+        fromUserId: requestOwnerId,
         toUserId: user._id,
       });
-      log("Friend request rejected and notification emitted", { partnerId, timestamp });
-      Toast.show({ type: "success", text1: "Request Rejected", text2: "Friend request rejected." });
-    } catch (error: any) {
-      log("Error rejecting friend request", { error: error.message });
-      Toast.show({ type: "error", text1: "Error", text2: "Failed to reject friend request." });
+      log("Friend request rejected and notification emitted", { partnerId: requestOwnerId, timestamp });
     }
+
+    setIsRequestProcessing(false);
   };
 
   const handleLeaveChat = useCallback(() => {
@@ -485,14 +507,14 @@ const Chat = () => {
             <TouchableOpacity
               onPress={() => handleAcceptFriendRequest(item.timestamp)}
               className="bg-indigo-600 px-4 py-2 rounded-xl shadow-sm active:scale-95"
-              disabled={chatEnded}
+              disabled={chatEnded || isRequestProcessing}
             >
               <Text className="text-white text-sm font-semibold">Accept</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleRejectFriendRequest(item.timestamp)}
               className="bg-red-600 px-4 py-2 rounded-xl shadow-sm active:scale-95"
-              disabled={chatEnded}
+              disabled={chatEnded || isRequestProcessing}
             >
               <Text className="text-white text-sm font-semibold">Reject</Text>
             </TouchableOpacity>
@@ -517,6 +539,7 @@ const Chat = () => {
     !partnerId ||
     connectionStatus === "disconnected" ||
     chatEnded ||
+    isRequestProcessing ||
     (friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId)) ||
     (friendRequest && friendRequest.fromUserId === partnerId);
 
@@ -605,7 +628,7 @@ const Chat = () => {
                 }`}
               >
                 <Ionicons name="person-add-outline" size={20} color="white" className="mr-2" />
-                <Text className="text-white text-base font-semibold">Send Friend Request</Text>
+                <Text className="text-white text-base font-semibold">{isRequestProcessing ? "Processing..." : "Send Friend Request"}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setLeaveConfirmVisible(true)}

@@ -71,22 +71,6 @@ const Settings = () => {
     Toast.show({ type: 'info', text1: 'Coming Soon', text2: `${label} is not yet implemented.` });
   };
 
-  if (!user?._id) {
-    return (
-      <View className="flex-1 bg-[#1C1C3A] items-center justify-center px-6">
-        <Ionicons name="person-circle-outline" size={68} color="#8B5CF6" />
-        <Text className="text-white text-xl font-semibold mt-4">Complete your profile</Text>
-        <Text className="text-gray-400 mt-2 text-center">Create your account details before using chats and friend features.</Text>
-        <TouchableOpacity
-          onPress={() => router.push('/settings/register')}
-          className="mt-6 bg-indigo-600 px-6 py-3 rounded-xl"
-        >
-          <Text className="text-white font-semibold">Set up now</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <View className="flex-1 bg-[#1C1C3A]">
       <View className="flex-row items-center justify-between px-4 py-4 border-b border-gray-700 bg-[#1C1C3A]">
