@@ -85,7 +85,7 @@ const Friends = () => {
   };
 
   const navigateToHome = () => {
-    router.replace('/(tabs)/home');
+    router.replace('/home');
   };
 
   const navigateToFriendChat = (friendId: string) => {

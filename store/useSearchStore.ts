@@ -1,12 +1,11 @@
 import { create } from 'zustand';
 import Toast from 'react-native-toast-message';
 import useUserStore from './useUserStore';
-import { Socket } from 'socket.io-client';
 
 interface SearchStore {
   isSearching: boolean;
-  startSearching: (socket: Socket, onMatched: (partnerId: string, partnerName: string) => void) => void;
-  stopSearching: (socket?: Socket | null) => void;
+  startSearching: (socket: any, onMatched: (partnerId: string, partnerName: string) => void) => void;
+  stopSearching: (socket?: any | null) => void;
 }
 
 let matchFoundListener: ((payload: { partnerId: string; partnerName: string }) => void) | null = null;

@@ -16,8 +16,8 @@ import api from '@/utils/api';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type RootStackParamList = {
-  '(tabs)/home': undefined;
-  '(tabs)/settings/register': undefined;
+  'home': undefined;
+  'settings/register': undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;

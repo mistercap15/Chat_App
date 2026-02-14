@@ -229,13 +229,13 @@ const FriendChat = () => {
 
   const navigateToFriends = () => {
     log('Navigating to friends', { socketId: socket?.id });
-    router.replace('/(tabs)/friends');
+    router.replace('/friends');
   };
 
   const navigateToHome = () => {
     log('Navigating to home', { socketId: socket?.id });
     reset();
-    router.replace('/(tabs)/home');
+    router.replace('/home');
   };
 
   const handleSendMessage = async () => {

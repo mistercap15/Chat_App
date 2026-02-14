@@ -3,14 +3,10 @@ import { Stack, usePathname, useRouter } from 'expo-router';
 import ThemedLayout from '@/components/ThemedLayout';
 import { useEffect } from 'react';
 import useRandomChatStore from '@/store/useRandomChatStore';
-import useUserStore from '@/store/useUserStore';
-
-const isValidObjectId = (value?: string | null) => !!value && /^[0-9a-fA-F]{24}$/.test(value);
 
 export default function HomeLayout() {
   const { isDarkMode } = useTheme();
   const { partnerId } = useRandomChatStore();
-  const user = useUserStore((state) => state.user);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -19,15 +15,10 @@ export default function HomeLayout() {
   const bgColor = isDarkMode ? '#000' : '#fff7ed';
 
   useEffect(() => {
-    if (!isValidObjectId(user?._id) && pathname !== '/(tabs)/settings/register') {
-      router.replace('/(tabs)/settings/register');
-      return;
+    if (partnerId && pathname !== '/home/chat') {
+      router.replace('/home/chat');
     }
-
-    if (partnerId && pathname !== '/(tabs)/home/chat') {
-      router.replace('/(tabs)/home/chat');
-    }
-  }, [partnerId, pathname, router, user?._id]);
+  }, [partnerId, pathname, router]);
 
   return (
     <ThemedLayout>

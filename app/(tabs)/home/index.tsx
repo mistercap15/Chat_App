@@ -18,12 +18,7 @@ const Home = () => {
 
   useFocusEffect(
     useCallback(() => {
-      if (!user?._id) {
-        router.replace('/(tabs)/settings/register');
-        return;
-      }
-
-      if (!socket?.connected && !isConnecting) {
+      if (user?._id && !socket?.connected && !isConnecting) {
         connectSocket(user._id);
       }
 
@@ -35,8 +30,8 @@ const Home = () => {
 
   const handleStartSearch = async () => {
     if (!user?._id) {
-      Toast.show({ type: 'error', text1: 'Profile required', text2: 'Please complete your profile first.' });
-      router.push('/(tabs)/settings/register');
+      Toast.show({ type: 'info', text1: 'Create profile', text2: 'Set up your profile before starting chat.' });
+      router.push('/settings/register');
       return;
     }
 
@@ -54,7 +49,7 @@ const Home = () => {
 
     startSearching(activeSocket, (partnerId, partnerName) => {
       setPartner(partnerId, partnerName);
-      router.push('/(tabs)/home/chat');
+      router.push('/home/chat');
     });
   };
 

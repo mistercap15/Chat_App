@@ -108,7 +108,7 @@ const Chat = () => {
       hasJoinedRoom.current = false;
       isChatInitialized.current = false;
       setChatEnded(true);
-      router.replace("/(tabs)/friends");
+      router.replace("/friends");
     },
     [reset]
   );
@@ -123,7 +123,7 @@ const Chat = () => {
       hasJoinedRoom.current = false;
       isChatInitialized.current = false;
       setChatEnded(true);
-      router.replace("/(tabs)/home");
+      router.replace("/home");
     },
     [reset]
   );

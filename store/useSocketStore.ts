@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import io, { Socket } from 'socket.io-client';
+import io from 'socket.io-client';
 import { AppState, AppStateStatus } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { BASE_URL } from '@/utils/constants';
@@ -9,15 +9,15 @@ import useFriendRequestStore from './useFriendRequestStore';
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 interface SocketStore {
-  socket: Socket | null;
+  socket: any | null;
   connectionStatus: ConnectionStatus;
   isConnecting: boolean;
   connectedUserId: string | null;
-  connectSocket: (userId: string) => Promise<Socket | null>;
+  connectSocket: (userId: string) => Promise<any | null>;
   disconnectSocket: () => void;
 }
 
-let activeConnectPromise: Promise<Socket | null> | null = null;
+let activeConnectPromise: Promise<any | null> | null = null;
 let appStateSubscribed = false;
 
 const isValidObjectId = (value?: string | null) => !!value && /^[0-9a-fA-F]{24}$/.test(value);
@@ -27,7 +27,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
     console.log(`[${new Date().toISOString()}] SocketStore: ${message}`, data ?? '');
   };
 
-  const attachCoreListeners = (socket: Socket, userId: string) => {
+  const attachCoreListeners = (socket: any, userId: string) => {
     socket.removeAllListeners('connect');
     socket.removeAllListeners('connect_error');
     socket.removeAllListeners('reconnect');
@@ -43,7 +43,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       useFriendRequestStore.getState().fetchPendingRequests(userId);
     });
 
-    socket.on('reconnect', (attempt) => {
+    socket.on('reconnect', (attempt: number) => {
       const username = useUserStore.getState().user?.user_name || 'Anonymous';
       log('Socket reconnected', { attempt, userId, socketId: socket.id });
       set({ connectionStatus: 'connected', isConnecting: false, connectedUserId: userId });
@@ -51,7 +51,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       useFriendRequestStore.getState().fetchPendingRequests(userId);
     });
 
-    socket.on('connect_error', (error) => {
+    socket.on('connect_error', (error: Error) => {
       log('Socket connect_error', { message: error.message, userId });
       set({ connectionStatus: 'disconnected', isConnecting: false });
     });
@@ -68,13 +68,13 @@ const useSocketStore = create<SocketStore>((set, get) => {
       Toast.show({ type: 'error', text1: 'Socket error', text2: message });
     });
 
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', (reason: string) => {
       log('Socket disconnected', { reason, userId, socketId: socket.id });
       set({ connectionStatus: 'disconnected', isConnecting: false });
     });
   };
 
-  const connectSocket = async (userId: string): Promise<Socket | null> => {
+  const connectSocket = async (userId: string): Promise<any | null> => {
     if (!isValidObjectId(userId)) {
       log('connectSocket blocked due to invalid userId', { userId });
       return null;
@@ -112,7 +112,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
 
       attachCoreListeners(nextSocket, userId);
 
-      const finalize = (result: Socket | null) => {
+      const finalize = (result: any | null) => {
         nextSocket.off('connect', onConnect);
         nextSocket.off('connect_error', onConnectError);
         activeConnectPromise = null;
@@ -146,7 +146,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       if (!isValidObjectId(userId)) return;
       const { socket, connectionStatus } = get();
       if (!socket?.connected && connectionStatus !== 'connecting') {
-        connectSocket(userId);
+        connectSocket(userId as string);
       }
     });
     appStateSubscribed = true;
