@@ -1,9 +1,8 @@
-// src/components/Home.tsx
 import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Heart, User } from 'lucide-react-native';
+import { Heart, ShieldCheck, Sparkles, User } from 'lucide-react-native';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
@@ -13,120 +12,110 @@ import useRandomChatStore from '@/store/useRandomChatStore';
 
 const Home = () => {
   const { user } = useUserStore();
-  const { socket, connectionStatus, connectSocket } = useSocketStore();
+  const { socket, connectionStatus, connectSocket, isConnecting } = useSocketStore();
   const { isSearching, startSearching, stopSearching } = useSearchStore();
   const { setPartner } = useRandomChatStore();
-
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Home: ${message}`, data || '');
-  };
 
   useFocusEffect(
     useCallback(() => {
       if (!user?._id) {
-        log('No user ID, skipping socket connection');
+        router.replace('/(tabs)/settings/register');
         return;
       }
-      if (!socket?.connected || connectionStatus === 'disconnected') {
-        log('Connecting socket', { userId: user._id });
+
+      if (!socket?.connected && !isConnecting) {
         connectSocket(user._id);
       }
+
       return () => {
-        log('Home screen unfocused, stopping search');
         stopSearching(socket);
       };
-    }, [user?._id, socket, connectionStatus, connectSocket, stopSearching])
+    }, [user?._id, socket, isConnecting, connectSocket, stopSearching])
   );
 
-  const handleStartSearch = () => {
+  const handleStartSearch = async () => {
     if (!user?._id) {
-      Toast.show({ type: 'error', text1: 'Profile Not Set Up', text2: 'Please register to start chatting.' });
+      Toast.show({ type: 'error', text1: 'Profile required', text2: 'Please complete your profile first.' });
+      router.push('/(tabs)/settings/register');
       return;
     }
-    if (!socket || connectionStatus !== 'connected') {
-      connectSocket(user._id);
-      Toast.show({ type: 'info', text1: 'Connecting', text2: 'Please wait...' });
-      setTimeout(() => {
-        if (socket?.connected) {
-          startSearching(socket, (partnerId, partnerName) => {
-            setPartner(partnerId, partnerName);
-            router.push('/(tabs)/home/chat');
-          });
-        } else {
-          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
-        }
-      }, 1000);
+
+    let activeSocket = socket;
+
+    if (!activeSocket?.connected || connectionStatus !== 'connected') {
+      Toast.show({ type: 'info', text1: 'Connecting', text2: 'Preparing your chat connection...' });
+      activeSocket = await connectSocket(user._id);
+    }
+
+    if (!activeSocket?.connected) {
+      Toast.show({ type: 'error', text1: 'Unable to connect', text2: 'Please try again in a moment.' });
       return;
     }
-    startSearching(socket, (partnerId, partnerName) => {
+
+    startSearching(activeSocket, (partnerId, partnerName) => {
       setPartner(partnerId, partnerName);
       router.push('/(tabs)/home/chat');
     });
   };
 
-  const handleStopSearch = () => {
-    stopSearching(socket);
-  };
-
-  const navigateToFriends = () => {
-    router.push('/(tabs)/friends');
-  };
-
   return (
-    <View className="flex-1 bg-[#1C1C3A] px-6 pt-12">
-      <View className="flex-row justify-center items-center mb-6">
-        <View className="bg-indigo-500 p-3 rounded-full">
-          <Ionicons name="chatbubble-ellipses-outline" size={24} color="white" />
-        </View>
-        <Text className="text-white text-2xl font-bold ml-3 tracking-wide">Zu.Chat</Text>
-      </View>
-      <View className="items-center mt-6 mb-8">
-        <View className="w-40 h-40 rounded-full bg-indigo-400/20 items-center justify-center">
-          <Ionicons name="people-outline" size={72} color="#5B2EFF" />
-        </View>
-      </View>
-      <View className="items-center">
-        <Text className="text-white text-xl font-semibold mb-1">Find a person to chat with</Text>
-        <Text className="text-gray-400 text-base text-center">Anonymous • Secure • Fun</Text>
-      </View>
-      <View className="items-center mt-12">
-        {isSearching ? (
-          <View className="items-center">
-            <Text className="text-white text-lg font-semibold mb-4">Searching for a match...</Text>
-            <TouchableOpacity
-              onPress={handleStopSearch}
-              className="bg-red-600 px-10 py-4 rounded-2xl shadow-lg active:scale-95"
-            >
-              <Text className="text-white text-lg font-bold tracking-wider">STOP SEARCHING</Text>
-            </TouchableOpacity>
+    <View className="flex-1 bg-[#12122A] px-6 pt-12">
+      <View className="mb-8 rounded-3xl bg-[#1B1B40] px-5 py-6">
+        <View className="flex-row items-center">
+          <View className="bg-indigo-500 p-3 rounded-2xl">
+            <Ionicons name="chatbubble-ellipses-outline" size={26} color="white" />
           </View>
-        ) : (
+          <View className="ml-3">
+            <Text className="text-white text-2xl font-bold">Zu.Chat</Text>
+            <Text className="text-gray-400 text-sm">Anonymous conversations, real connections</Text>
+          </View>
+        </View>
+      </View>
+
+      <View className="rounded-3xl bg-[#1B1B40] p-5 mb-6">
+        <Text className="text-white text-lg font-semibold mb-1">Ready to meet someone new?</Text>
+        <Text className="text-gray-400">Tap start and we will find a compatible partner instantly.</Text>
+
+        <TouchableOpacity
+          onPress={handleStartSearch}
+          disabled={isSearching || isConnecting || connectionStatus === 'connecting'}
+          className={`mt-6 rounded-2xl py-4 items-center ${isSearching ? 'bg-red-600' : 'bg-indigo-600'} ${
+            isConnecting || connectionStatus === 'connecting' ? 'opacity-60' : ''
+          }`}
+        >
+          {isSearching || isConnecting || connectionStatus === 'connecting' ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text className="text-white text-base font-semibold tracking-wide">START SEARCHING</Text>
+          )}
+        </TouchableOpacity>
+
+        {isSearching && (
           <TouchableOpacity
-            onPress={handleStartSearch}
-            disabled={isSearching || connectionStatus === 'connecting'}
-            className={`bg-indigo-600 px-10 py-4 rounded-2xl shadow-lg active:scale-95 ${isSearching || connectionStatus === 'connecting' ? 'opacity-50' : ''}`}
+            onPress={() => stopSearching(socket)}
+            className="mt-3 rounded-2xl py-3 items-center border border-red-500"
           >
-            {connectionStatus === 'connecting' ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <Text className="text-white text-lg font-bold tracking-wider">START SEARCHING</Text>
-            )}
+            <Text className="text-red-300 font-medium">Stop Search</Text>
           </TouchableOpacity>
         )}
       </View>
-      <View className="items-center mt-10">
-        <TouchableOpacity onPress={navigateToFriends}>
-          <Text className="text-indigo-400 text-base font-semibold underline">Search Preferences</Text>
-        </TouchableOpacity>
-        <View className="mt-6 gap-4 items-center">
-          <View className="flex-row items-center gap-2">
-            <User size={22} color="#8B5CF6" />
-            <Text className="text-gray-300 text-base">All Genders</Text>
-          </View>
-          <View className="flex-row items-center gap-2">
-            <Heart size={22} color="#8B5CF6" />
-            <Text className="text-gray-300 text-base">Any Interests</Text>
-          </View>
+
+      <View className="rounded-3xl bg-[#1B1B40] p-5 gap-4">
+        <View className="flex-row items-center gap-2">
+          <Sparkles size={18} color="#8B5CF6" />
+          <Text className="text-gray-200">Smart random matching</Text>
+        </View>
+        <View className="flex-row items-center gap-2">
+          <ShieldCheck size={18} color="#8B5CF6" />
+          <Text className="text-gray-200">Real-time secure socket session</Text>
+        </View>
+        <View className="flex-row items-center gap-2">
+          <User size={18} color="#8B5CF6" />
+          <Text className="text-gray-200">Profile-backed identity sync</Text>
+        </View>
+        <View className="flex-row items-center gap-2">
+          <Heart size={18} color="#8B5CF6" />
+          <Text className="text-gray-200">Turn chats into friendships</Text>
         </View>
       </View>
     </View>
