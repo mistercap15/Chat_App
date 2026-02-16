@@ -16,16 +16,17 @@ import api from '@/utils/api';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type RootStackParamList = {
-  '(tabs)/home': undefined;
-  '(tabs)/settings/register': undefined;
+  'home': undefined;
+  'settings/register': undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const genders = ['Male', 'Female', 'Unknown'];
+const isValidObjectId = (value?: string | null) => !!value && /^[0-9a-fA-F]{24}$/.test(value);
 
 const SetUpProfile = () => {
-  const { user, setUser, clearUser } = useUserStore();
+  const { user, setUser } = useUserStore();
   const { socket, connectSocket, connectionStatus } = useSocketStore();
   const navigation = useNavigation<NavigationProp>();
 
@@ -34,51 +35,30 @@ const SetUpProfile = () => {
   const [gender, setGender] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] SetUpProfile: ${message}`, data || '');
-  };
-
   useEffect(() => {
-    if (user) {
-      setUserName(user.user_name || '');
-      setBio(user.bio || '');
-      setGender(user.gender || '');
-    } else {
-      setUserName('');
-      setBio('');
-      setGender('');
-    }
+    setUserName(user?.user_name || '');
+    setBio(user?.bio || '');
+    setGender(user?.gender || '');
   }, [user]);
 
   const handleSave = async () => {
     if (!user_name.trim() || !gender) {
-      Toast.show({
-        type: 'error',
-        text1: 'Missing Fields',
-        text2: 'Please fill in username and gender.',
-      });
+      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in username and gender.' });
       return;
     }
 
-    if (user_name.length > 20) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Username',
-        text2: 'Username cannot exceed 20 characters.',
-      });
+    if (user_name.trim().length > 20) {
+      Toast.show({ type: 'error', text1: 'Invalid Username', text2: 'Username cannot exceed 20 characters.' });
       return;
     }
 
-    if (bio.length > 200) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Bio',
-        text2: 'Bio cannot exceed 200 characters.',
-      });
+    if (bio.trim().length > 200) {
+      Toast.show({ type: 'error', text1: 'Invalid Bio', text2: 'Bio cannot exceed 200 characters.' });
       return;
     }
 
     setIsSaving(true);
+
     try {
       const payload = {
         user_name: user_name.trim(),
@@ -87,66 +67,41 @@ const SetUpProfile = () => {
         interests: user?.interests || [],
       };
 
-      let response;
-      const isExistingUser = user?._id && /^[0-9a-fA-F]{24}$/.test(user._id);
+      const shouldUpdate = isValidObjectId(user?._id);
+      const endpoint = shouldUpdate ? '/api/users/update' : '/api/users/create';
+      const body = shouldUpdate ? { ...payload, userId: user!._id } : payload;
 
-      if (isExistingUser) {
-        log('Updating existing user', { userId: user._id });
-        response = await api.post('/api/users/update', {
-          ...payload,
-          userId: user._id,
-        });
-      } else {
-        log('Creating new user');
-        response = await api.post('/api/users/create', payload);
-      }
+      const response = await api.post(endpoint, body);
+      const persistedUser = response.data?.user;
 
-      const newUser = response.data.user;
-      setUser(newUser);
-      log('User saved', { userId: newUser._id, user_name: newUser.user_name });
-
-      if (socket?.connected && newUser._id) {
-        socket.emit('set_username', {
-          userId: newUser._id,
-          username: newUser.user_name || 'Anonymous',
-        });
-        log('Emitted set_username', { userId: newUser._id, username: newUser.user_name });
-      }
-
-      if (newUser._id && /^[0-9a-fA-F]{24}$/.test(newUser._id)) {
-        if (!socket?.connected || connectionStatus === 'disconnected') {
-          connectSocket(newUser._id);
-          log('Connecting socket', { userId: newUser._id });
-        }
-      } else {
-        log('Invalid user ID for socket connection', { userId: newUser._id });
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Invalid user ID.',
-        });
-        setIsSaving(false);
+      if (!isValidObjectId(persistedUser?._id)) {
+        Toast.show({ type: 'error', text1: 'Profile Error', text2: 'Server returned an invalid user profile.' });
         return;
+      }
+
+      setUser(persistedUser);
+
+      if (socket?.connected) {
+        socket.emit('set_username', {
+          userId: persistedUser._id,
+          username: persistedUser.user_name || 'Anonymous',
+        });
+      }
+
+      if (!socket?.connected || connectionStatus !== 'connected') {
+        await connectSocket(persistedUser._id);
       }
 
       Toast.show({
         type: 'success',
-        text1: isExistingUser ? 'Profile Updated' : 'Profile Created',
-        text2: `Your profile has been ${isExistingUser ? 'updated' : 'created'}! 🎉`,
+        text1: shouldUpdate ? 'Profile Updated' : 'Profile Created',
+        text2: 'You are ready to start chatting 🎉',
       });
+
       navigation.goBack();
     } catch (error: any) {
-      log('Profile setup error', {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
       const errorMessage = error.response?.data?.message || 'Failed to save profile. Please try again.';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
     } finally {
       setIsSaving(false);
     }
@@ -185,58 +140,49 @@ const SetUpProfile = () => {
             placeholderTextColor="#A0A0A0"
             value={user_name}
             onChangeText={setUserName}
-            className="bg-[#2E2E4D] text-white p-4 rounded-xl"
             maxLength={20}
-            editable={!isSaving}
+            className="bg-[#2E2E4D] text-white px-4 py-3 rounded-xl border border-gray-600"
           />
-          <TouchableOpacity
-            onPress={handleRandomUsername}
-            className="bg-indigo-600 py-3 rounded-xl mt-3 active:scale-95"
-            disabled={isSaving}
-          >
-            <Text className="text-white font-medium text-center">Generate Random Nickname</Text>
+          <TouchableOpacity onPress={handleRandomUsername} className="mt-3 self-start bg-indigo-500 rounded-lg px-3 py-2">
+            <Text className="text-white text-sm">Random Name</Text>
           </TouchableOpacity>
         </View>
 
         <View className="mb-8">
           <View className="flex-row items-center gap-2 mb-2">
-            <Ionicons name="information-circle-outline" size={18} color="white" />
-            <Text className="text-white font-medium">About Me</Text>
-          </View>
-          <Text className="text-gray-400 text-sm mb-3">Add a few words about yourself to interest your partner</Text>
-          <TextInput
-            placeholder="Tell us about yourself"
-            placeholderTextColor="#A0A0A0"
-            value={bio}
-            onChangeText={setBio}
-            className="bg-[#2E2E4D] text-white p-4 rounded-xl h-32"
-            multiline
-            textAlignVertical="top"
-            maxLength={200}
-            editable={!isSaving}
-          />
-        </View>
-
-        <View className="mb-8">
-          <View className="flex-row items-center gap-2 mb-2">
             <Ionicons name="person-circle-outline" size={18} color="white" />
-            <Text className="text-white font-medium">My Gender</Text>
+            <Text className="text-white font-medium">Gender</Text>
           </View>
-          <Text className="text-gray-400 text-sm mb-3">Choose your gender to get better matches</Text>
-          <View className="flex-col gap-3">
+          <View className="flex-row flex-wrap gap-2">
             {genders.map((g) => (
               <Pressable
                 key={g}
                 onPress={() => setGender(g)}
-                disabled={isSaving}
-                className={`py-3 px-4 rounded-xl active:scale-95 ${
-                  gender === g ? 'bg-indigo-600' : 'bg-[#2E2E4D]'
-                }`}
+                className={`rounded-lg px-4 py-2 border ${gender === g ? 'bg-indigo-600 border-indigo-400' : 'bg-[#2E2E4D] border-gray-600'}`}
               >
-                <Text className="text-white font-medium">{g}</Text>
+                <Text className="text-white">{g}</Text>
               </Pressable>
             ))}
           </View>
+        </View>
+
+        <View>
+          <View className="flex-row items-center gap-2 mb-2">
+            <Ionicons name="create-outline" size={18} color="white" />
+            <Text className="text-white font-medium">Bio</Text>
+          </View>
+          <TextInput
+            placeholder="Tell people about yourself"
+            placeholderTextColor="#A0A0A0"
+            value={bio}
+            onChangeText={setBio}
+            maxLength={200}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+            className="bg-[#2E2E4D] text-white px-4 py-3 rounded-xl border border-gray-600 h-32"
+          />
+          <Text className="text-gray-400 mt-2 text-xs">{bio.length}/200</Text>
         </View>
       </View>
     </View>

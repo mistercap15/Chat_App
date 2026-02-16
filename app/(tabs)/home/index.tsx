@@ -17,50 +17,39 @@ const Home = () => {
   const { isSearching, startSearching, stopSearching } = useSearchStore();
   const { setPartner } = useRandomChatStore();
 
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Home: ${message}`, data || '');
-  };
-
   useFocusEffect(
     useCallback(() => {
-      if (!user?._id) {
-        log('No user ID, skipping socket connection');
-        return;
-      }
-      if (!socket?.connected || connectionStatus === 'disconnected') {
-        log('Connecting socket', { userId: user._id });
+      if (user?._id && (!socket?.connected || connectionStatus === 'disconnected')) {
         connectSocket(user._id);
       }
+
       return () => {
-        log('Home screen unfocused, stopping search');
         stopSearching(socket);
       };
     }, [user?._id, socket, connectionStatus, connectSocket, stopSearching])
   );
 
-  const handleStartSearch = () => {
+  const handleStartSearch = async () => {
     if (!user?._id) {
-      Toast.show({ type: 'error', text1: 'Profile Not Set Up', text2: 'Please register to start chatting.' });
+      Toast.show({ type: 'info', text1: 'Profile Not Set Up', text2: 'Please register to start chatting.' });
+      router.push('/settings/register');
       return;
     }
-    if (!socket || connectionStatus !== 'connected') {
-      connectSocket(user._id);
+
+    let activeSocket = socket;
+    if (!activeSocket?.connected || connectionStatus !== 'connected') {
       Toast.show({ type: 'info', text1: 'Connecting', text2: 'Please wait...' });
-      setTimeout(() => {
-        if (socket?.connected) {
-          startSearching(socket, (partnerId, partnerName) => {
-            setPartner(partnerId, partnerName);
-            router.push('/(tabs)/home/chat');
-          });
-        } else {
-          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
-        }
-      }, 1000);
+      activeSocket = await connectSocket(user._id);
+    }
+
+    if (!activeSocket?.connected) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
       return;
     }
-    startSearching(socket, (partnerId, partnerName) => {
+
+    startSearching(activeSocket, (partnerId, partnerName) => {
       setPartner(partnerId, partnerName);
-      router.push('/(tabs)/home/chat');
+      router.push('/home/chat');
     });
   };
 
@@ -69,7 +58,7 @@ const Home = () => {
   };
 
   const navigateToFriends = () => {
-    router.push('/(tabs)/friends');
+    router.push('/friends');
   };
 
   return (

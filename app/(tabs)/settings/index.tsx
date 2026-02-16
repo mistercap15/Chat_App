@@ -23,7 +23,7 @@ const Option: React.FC<OptionProps> = ({ icon, label, onPress }) => (
 
 const Settings = () => {
   const router = useRouter();
-  const { user, clearUser }:any = useUserStore();
+  const { user, clearUser }: any = useUserStore();
   const { socket, disconnectSocket } = useSocketStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -41,7 +41,7 @@ const Settings = () => {
         setIsDeleting(false);
         setDeleteModalVisible(false);
         Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
-        router.replace('/(tabs)/home');
+        router.replace('/home');
       }
     });
     return () => {
@@ -59,7 +59,7 @@ const Settings = () => {
       setIsDeleting(false);
       setDeleteModalVisible(false);
       Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
-      router.replace('/(tabs)/home');
+      router.replace('/home');
     } catch (error: any) {
       setIsDeleting(false);
       setDeleteModalVisible(false);
@@ -78,7 +78,7 @@ const Settings = () => {
           <Ionicons name="settings-outline" size={26} color="white" />
           <Text className="text-white text-xl font-semibold">Settings</Text>
         </View>
-        <TouchableOpacity onPress={() => router.push('/(tabs)/settings/register')} disabled={isDeleting}>
+        <TouchableOpacity onPress={() => router.push('/settings/register')} disabled={isDeleting}>
           <Text className="text-indigo-400 font-semibold text-base">Edit</Text>
         </TouchableOpacity>
       </View>
