@@ -86,7 +86,7 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
     }
     try {
       console.log(`[${new Date().toISOString()}] useFriendChatStore: Fetching chat history`, { userId, friendId });
-      const response = await api.get(`/api/chats/${userId}/${friendId}`);
+      const response = await api.get(`/api/chats/${friendId}`);
       const messages = response.data.messages.map((msg: any) => ({
         messageId: msg._id, // Use server-provided ID
         text: msg.text,

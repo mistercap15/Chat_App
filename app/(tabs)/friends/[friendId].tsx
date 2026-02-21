@@ -126,7 +126,7 @@ const FriendChat = () => {
 
     const initializeChat = async () => {
       try {
-        const response = await api.get(`/api/users/friends/${user._id}`);
+        const response = await api.get('/api/users/me/friends');
         const friend = response.data.friends.find((f: any) => f._id === friendId);
         if (!friend) {
           navigateToFriends();

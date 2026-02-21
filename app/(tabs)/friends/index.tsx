@@ -31,7 +31,7 @@ const Friends = () => {
     if (!force && lastFetchTimeRef.current && Date.now() - lastFetchTimeRef.current < 5000) return;
     setLoading(true);
     try {
-      const response = await api.get(`/api/users/friends/${user._id}`);
+      const response = await api.get('/api/users/me/friends');
       setFriends(response.data.friends || []);
       lastFetchTimeRef.current = Date.now();
     } catch (error: any) {
@@ -82,7 +82,7 @@ const Friends = () => {
       return;
     }
     try {
-      await api.delete(`/api/users/remove-friend/${user._id}/${friendId}`);
+      await api.delete(`/api/users/friends/${friendId}`);
       setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
       socket?.emit('friend_removed', { userId: user._id, removedUserId: friendId });
       Toast.show({ type: 'success', text1: 'Friend Removed', text2: 'The friend has been removed.' });

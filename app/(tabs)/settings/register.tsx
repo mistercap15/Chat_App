@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Shuffle, X, Check, MessageCircle } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
+import useAuthStore from '@/store/useAuthStore';
 import useSocketStore from '@/store/useSocketStore';
 import api from '@/utils/api';
 
@@ -32,6 +33,7 @@ const randomNames = [
 
 const SetUpProfile = () => {
   const { user, setUser } = useUserStore();
+  const { setToken } = useAuthStore();
   const { socket, connectSocket, connectionStatus } = useSocketStore();
   const navigation = useNavigation();
 
@@ -81,9 +83,12 @@ const SetUpProfile = () => {
       const isExistingUser = user?._id && /^[0-9a-fA-F]{24}$/.test(user._id);
 
       if (isExistingUser) {
-        response = await api.post('/api/users/update', { ...payload, userId: user._id });
+        response = await api.put('/api/users/profile', payload);
       } else {
-        response = await api.post('/api/users/create', payload);
+        response = await api.post('/api/auth/register', payload);
+        if (response.data.token) {
+          setToken(response.data.token);
+        }
       }
 
       const newUser = response.data.user;

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Edit3, Trash2, Bell, Lock, Globe, ChevronRight } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import useUserStore from '@/store/useUserStore';
+import useAuthStore from '@/store/useAuthStore';
 import useSocketStore from '@/store/useSocketStore';
 import api from '@/utils/api';
 import Toast from 'react-native-toast-message';
@@ -11,6 +12,7 @@ import Toast from 'react-native-toast-message';
 const Settings = () => {
   const router = useRouter();
   const { user, clearUser }: any = useUserStore();
+  const { clearToken } = useAuthStore();
   const { socket, disconnectSocket } = useSocketStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -20,6 +22,7 @@ const Settings = () => {
     socket.on('user_deleted', ({ userId }: { userId: string }) => {
       if (userId === user?._id) {
         clearUser();
+        clearToken();
         disconnectSocket();
         setIsDeleting(false);
         setDeleteModalVisible(false);
@@ -36,8 +39,9 @@ const Settings = () => {
     if (!user?._id || isDeleting) return;
     setIsDeleting(true);
     try {
-      await api.post('/api/users/delete', { userId: user._id });
+      await api.delete('/api/users/account');
       clearUser();
+      clearToken();
       disconnectSocket();
       setIsDeleting(false);
       setDeleteModalVisible(false);

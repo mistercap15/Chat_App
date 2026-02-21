@@ -1,5 +1,6 @@
 import axios from "axios";
 import { BASE_URL } from "./constants";
+import useAuthStore from "@/store/useAuthStore";
 
 const MAX_RETRIES = 3;
 const INITIAL_DELAY = 1000;
@@ -11,6 +12,10 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
+    const token = useAuthStore.getState().token;
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => Promise.reject(error)
