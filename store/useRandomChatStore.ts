@@ -14,6 +14,7 @@ interface RandomChatStore {
   setPartner: (partnerId: string | null, partnerName: string | null) => void;
   setPartnerTyping: (isTyping: boolean) => void;
   emitTyping: (socket: any) => void;
+  emitStopTyping: (socket: any) => void;
   emitMessageSeen: (socket: any, timestamp: number) => void;
   emitFriendRequestSent: (socket: any) => void;
   clearFriendRequestSent: () => void;
@@ -39,6 +40,13 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
     const partnerId = get().partnerId;
     if (socket?.connected && partnerId && userId) {
       socket.emit('typing', { toUserId: partnerId, fromUserId: userId });
+    }
+  },
+  emitStopTyping: (socket) => {
+    const userId = useUserStore.getState().user?._id;
+    const partnerId = get().partnerId;
+    if (socket?.connected && partnerId && userId) {
+      socket.emit('stop_typing', { toUserId: partnerId, fromUserId: userId });
     }
   },
   emitMessageSeen: (socket, timestamp) => {
@@ -75,19 +83,14 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
         set({ isPartnerTyping: true });
       }
     };
+    const handlePartnerStopTyping = ({ fromUserId }: { fromUserId: string }) => {
+      if (fromUserId === get().partnerId) {
+        set({ isPartnerTyping: false });
+      }
+    };
     const handleFriendRequest = ({ fromUserId, fromUsername }: { fromUserId: string; fromUsername: string }) => {
-      console.log(`[${new Date().toISOString()}] handleFriendRequest: Received friend request`, {
-        fromUserId,
-        fromUsername,
-        partnerId: get().partnerId,
-      });
       if (fromUserId === get().partnerId) {
         set({ friendRequest: { fromUserId, fromUsername } });
-      } else {
-        console.log(`[${new Date().toISOString()}] handleFriendRequest: Ignored, fromUserId does not match partnerId`, {
-          fromUserId,
-          partnerId: get().partnerId,
-        });
       }
     };
     const handleFriendRequestStatus = ({
@@ -101,7 +104,6 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
       fromUsername: string;
       status: string;
     }) => {
-      console.log(`[${new Date().toISOString()}] handleFriendRequestStatus:`, { fromUserId, toUserId, status });
       if (status === 'sent') {
         set({ friendRequestSent: { fromUserId, toUserId, fromUsername } });
       } else if (status === 'rejected') {
@@ -109,15 +111,9 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
       }
     };
     const handleFriendRequestAccepted = () => {
-      console.log(`[${new Date().toISOString()}] handleFriendRequestAccepted: Friend request accepted`);
       set({ friendRequestSent: null, friendRequest: null, friendRequestAccepted: true });
     };
     const handleFriendRequestRejected = ({ fromUserId, toUserId }: { fromUserId: string; toUserId: string }) => {
-      console.log(`[${new Date().toISOString()}] handleFriendRequestRejected: Friend request rejected`, {
-        fromUserId,
-        toUserId,
-        partnerId: get().partnerId,
-      });
       if (fromUserId === get().partnerId || toUserId === get().partnerId) {
         set({ friendRequest: null, friendRequestSent: null });
         Toast.show({ type: 'info', text1: 'Friend Request', text2: 'Friend request was rejected.' });
@@ -125,6 +121,7 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
     };
 
     socket.on('partner_typing', handlePartnerTyping);
+    socket.on('partner_stop_typing', handlePartnerStopTyping);
     socket.on('friend_request_received', handleFriendRequest);
     socket.on('friend_request_status', handleFriendRequestStatus);
     socket.on('friend_request_accepted', handleFriendRequestAccepted);
@@ -132,6 +129,7 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
 
     return () => {
       socket.off('partner_typing', handlePartnerTyping);
+      socket.off('partner_stop_typing', handlePartnerStopTyping);
       socket.off('friend_request_received', handleFriendRequest);
       socket.off('friend_request_status', handleFriendRequestStatus);
       socket.off('friend_request_accepted', handleFriendRequestAccepted);

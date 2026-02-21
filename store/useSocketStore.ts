@@ -49,6 +49,17 @@ const useSocketStore = create<SocketStore>((set, get) => {
       timeout: 20000,
     });
 
+    // Global listeners that must work on every screen
+    newSocket.on('friend_request_received', ({ fromUserId, fromUsername }: any) => {
+      log('Global: friend_request_received', { fromUserId, fromUsername });
+      useFriendRequestStore.getState().fetchPendingRequests(userId);
+      Toast.show({ type: 'info', text1: 'Friend Request', text2: `${fromUsername || 'Someone'} wants to be your friend!` });
+    });
+
+    newSocket.on('friend_added', ({ friendId, friendUsername }: any) => {
+      log('Global: friend_added', { friendId, friendUsername });
+    });
+
     newSocket.on('connect', () => {
       log('Socket connected', { userId, socketId: newSocket.id });
       set({ socket: newSocket, connectionStatus: 'connected', isConnecting: false });

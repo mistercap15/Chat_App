@@ -92,6 +92,7 @@ const FriendChat = () => {
     setPartner,
     startFriendChat,
     emitTyping,
+    emitStopTyping,
     emitMessageSeen,
     fetchChatHistory,
     sendMessage,
@@ -163,10 +164,9 @@ const FriendChat = () => {
 
   useEffect(() => {
     if (!socket?.connected || connectionStatus !== 'connected') return;
+    // Room joining is handled server-side by start_friend_chat.
     startFriendChat(socket, friendId, () => {
       isChatInitialized.current = true;
-      const roomId = [user?._id, friendId].sort().join('_');
-      socket?.emit('join_room', { roomId, userId: user?._id });
     });
   }, [socket, connectionStatus, friendId, user?._id, startFriendChat]);
 
@@ -249,14 +249,9 @@ const FriendChat = () => {
     flatListRef.current?.scrollToEnd({ animated: true });
 
     try {
+      // HTTP sendMessage saves to DB and emits receive_message to the socket room.
+      // Do NOT also emit send_message via socket — that causes double delivery.
       await sendMessage(friendId, input);
-      socket?.emit('send_message', {
-        toUserId: friendId,
-        message: input,
-        fromUserId: user?._id,
-        timestamp,
-        messageId,
-      });
     } catch (error: any) {
       setMessages((prev) => prev.filter((msg) => msg.messageId !== messageId));
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to send message.' });
@@ -273,8 +268,11 @@ const FriendChat = () => {
       setLastTypingTime(currentTime);
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => setLastTypingTime(null), TYPING_TIMEOUT);
-  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping]);
+    typingTimeoutRef.current = setTimeout(() => {
+      setLastTypingTime(null);
+      emitStopTyping(socket);
+    }, TYPING_TIMEOUT);
+  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, emitStopTyping]);
 
   const getInitial = () => (partnerName || 'F').charAt(0).toUpperCase();
 

@@ -110,6 +110,7 @@ const Chat = () => {
     friendRequestAccepted,
     setPartnerTyping,
     emitTyping,
+    emitStopTyping,
     emitMessageSeen,
     friendRequest,
     friendRequestSent,
@@ -230,11 +231,9 @@ const Chat = () => {
         return;
       }
 
-      if (!hasJoinedRoom.current) {
-        const roomId = [user._id, partnerId].sort().join("-");
-        socket.emit("join_room", { roomId, userId: user._id });
-        hasJoinedRoom.current = true;
-      }
+      // Room joining is handled server-side by the match logic.
+      // No need to emit join_room — the backend has no handler for it.
+      hasJoinedRoom.current = true;
 
       return () => {
         if (isIntentionallyLeaving.current && !leaveConfirmVisible && socket?.connected && partnerId && !chatEnded) {
@@ -346,8 +345,11 @@ const Chat = () => {
       setLastTypingTime(currentTime);
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => setLastTypingTime(null), TYPING_TIMEOUT);
-  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, chatEnded]);
+    typingTimeoutRef.current = setTimeout(() => {
+      setLastTypingTime(null);
+      emitStopTyping(socket);
+    }, TYPING_TIMEOUT);
+  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, emitStopTyping, chatEnded]);
 
   const sendMessageHandler = async () => {
     if (isSending || chatEnded || !isChatInitialized.current) return;

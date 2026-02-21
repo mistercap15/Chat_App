@@ -59,18 +59,27 @@ const Friends = () => {
       const friendRemovedListener = ({ removedUserId }: { removedUserId: string }) => {
         setFriends((prev) => prev.filter((friend) => friend._id !== removedUserId));
       };
-      const friendAddedListener = ({ userId: acceptorId, friendId }: { userId: string; friendId: string }) => {
-        if (acceptorId === user._id || friendId === user._id) {
-          setTimeout(() => fetchFriends(true), 500);
-        }
+      const friendAddedListener = ({ friendId: newFriendId, friendUsername }: { friendId: string; friendUsername: string }) => {
+        // Immediately add to local list, then refresh for full data
+        setFriends((prev) => {
+          if (prev.some((f) => f._id === newFriendId)) return prev;
+          return [...prev, { _id: newFriendId, user_name: friendUsername || 'Anonymous' }];
+        });
+        fetchFriends(true);
+      };
+      const friendRequestAcceptedListener = () => {
+        fetchFriends(true);
+        if (user?._id) fetchPendingRequests(user._id);
       };
 
       socket?.on('friend_removed', friendRemovedListener);
-      socket?.on('friend_request_accepted', friendAddedListener);
+      socket?.on('friend_added', friendAddedListener);
+      socket?.on('friend_request_accepted', friendRequestAcceptedListener);
 
       return () => {
         socket?.off('friend_removed', friendRemovedListener);
-        socket?.off('friend_request_accepted', friendAddedListener);
+        socket?.off('friend_added', friendAddedListener);
+        socket?.off('friend_request_accepted', friendRequestAcceptedListener);
       };
     }, [user?._id, connectSocket, socket, fetchFriends, fetchPendingRequests])
   );

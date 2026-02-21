@@ -21,8 +21,12 @@ const useSearchStore = create<SearchStore>((set, get) => ({
     }
     if (get().isSearching) return;
     set({ isSearching: true });
-    socket.emit('start_search', { userId, username });
-    socket.on('match_found', ({ partnerId, partnerName }:any) => {
+
+    // Remove any stale listener before adding a new one to prevent accumulation
+    socket.off('match_found');
+
+    const handleMatchFound = ({ partnerId, partnerName }: any) => {
+      socket.off('match_found', handleMatchFound);
       if (!/^[0-9a-fA-F]{24}$/.test(partnerId)) {
         set({ isSearching: false });
         Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid partner ID.' });
@@ -30,14 +34,18 @@ const useSearchStore = create<SearchStore>((set, get) => ({
       }
       set({ isSearching: false });
       onMatched(partnerId, partnerName);
-    });
+    };
+
+    socket.on('match_found', handleMatchFound);
+    socket.emit('start_search', { userId, username });
   },
   stopSearching: (socket) => {
     const userId = useUserStore.getState().user?._id;
     if (get().isSearching && socket?.connected && userId) {
       socket.emit('stop_search', { userId });
-      set({ isSearching: false });
     }
+    socket?.off('match_found');
+    set({ isSearching: false });
   },
 }));
 
