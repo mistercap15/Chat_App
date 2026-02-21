@@ -115,8 +115,12 @@ const SetUpProfile = () => {
         router.replace('/(tabs)/home');
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to save profile. Please try again.';
-      Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
+      if (error.response?.status === 429) {
+        Toast.show({ type: 'error', text1: 'Too Many Requests', text2: 'Please wait a moment and try again.' });
+      } else {
+        const errorMessage = error.response?.data?.message || 'Failed to save profile. Please try again.';
+        Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
+      }
     } finally {
       setIsSaving(false);
     }
