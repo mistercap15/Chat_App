@@ -115,6 +115,8 @@ const Chat = () => {
     friendRequest,
     friendRequestSent,
     emitFriendRequestSent,
+    clearFriendRequest,
+    clearFriendRequestSent,
     reset,
     setFriendRequestAccepted,
     initializeListeners,
@@ -403,6 +405,8 @@ const Chat = () => {
       setMessages((prev) =>
         prev.filter((msg) => !(msg.type === "friendRequestReceived" && msg.timestamp === timestamp))
       );
+      clearFriendRequest();
+      clearFriendRequestSent();
       socket?.emit("friend_request_rejected", { fromUserId: partnerId, toUserId: user._id });
       Toast.show({ type: "success", text1: "Rejected", text2: "Friend request rejected." });
     } catch (error: any) {

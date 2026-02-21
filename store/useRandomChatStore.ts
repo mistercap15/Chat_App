@@ -18,6 +18,7 @@ interface RandomChatStore {
   emitMessageSeen: (socket: any, timestamp: number) => void;
   emitFriendRequestSent: (socket: any) => void;
   clearFriendRequestSent: () => void;
+  clearFriendRequest: () => void;
   reset: () => void;
   setFriendRequestAccepted: (accepted: boolean) => void;
   initializeListeners: (socket: any) => () => void;
@@ -65,6 +66,7 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
     }
   },
   clearFriendRequestSent: () => set({ friendRequestSent: null }),
+  clearFriendRequest: () => set({ friendRequest: null }),
   reset: () => {
     set({
       partnerId: null,
