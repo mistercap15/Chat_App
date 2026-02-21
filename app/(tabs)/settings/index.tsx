@@ -1,36 +1,19 @@
-// src/components/Settings.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Image, ScrollView, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Edit3, Trash2, Bell, Lock, Globe, ChevronRight } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import useUserStore from '@/store/useUserStore';
 import useSocketStore from '@/store/useSocketStore';
 import api from '@/utils/api';
 import Toast from 'react-native-toast-message';
 
-interface OptionProps {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-}
-
-const Option: React.FC<OptionProps> = ({ icon, label, onPress }) => (
-  <TouchableOpacity onPress={onPress} className="flex-row items-center bg-[#2E2E4D] rounded-xl p-4 mb-3">
-    <Ionicons name={icon} size={24} color="#8B5CF6" />
-    <Text className="text-white text-base ml-3">{label}</Text>
-  </TouchableOpacity>
-);
-
 const Settings = () => {
   const router = useRouter();
-  const { user, clearUser }:any = useUserStore();
+  const { user, clearUser }: any = useUserStore();
   const { socket, disconnectSocket } = useSocketStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Settings: ${message}`, data || '');
-  };
 
   useEffect(() => {
     if (!socket) return;
@@ -40,8 +23,8 @@ const Settings = () => {
         disconnectSocket();
         setIsDeleting(false);
         setDeleteModalVisible(false);
-        Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
-        router.replace('/(tabs)/home');
+        Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted.' });
+        router.replace('/(tabs)/settings/register');
       }
     });
     return () => {
@@ -58,8 +41,8 @@ const Settings = () => {
       disconnectSocket();
       setIsDeleting(false);
       setDeleteModalVisible(false);
-      Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted successfully.' });
-      router.replace('/(tabs)/home');
+      Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been deleted.' });
+      router.replace('/(tabs)/settings/register');
     } catch (error: any) {
       setIsDeleting(false);
       setDeleteModalVisible(false);
@@ -68,74 +51,254 @@ const Settings = () => {
   };
 
   const handleOptionPress = (label: string) => {
-    Toast.show({ type: 'info', text1: 'Coming Soon', text2: `${label} is not yet implemented.` });
+    Toast.show({ type: 'info', text1: 'Coming Soon', text2: `${label} will be available soon.` });
+  };
+
+  const getInitial = () => (user?.user_name || 'A').charAt(0).toUpperCase();
+
+  const getGenderIcon = () => {
+    switch (user?.gender) {
+      case 'Male': return 'male';
+      case 'Female': return 'female';
+      default: return 'person';
+    }
   };
 
   return (
-    <View className="flex-1 bg-[#1C1C3A]">
-      <View className="flex-row items-center justify-between px-4 py-4 border-b border-gray-700 bg-[#1C1C3A]">
-        <View className="flex-row items-center gap-2">
-          <Ionicons name="settings-outline" size={26} color="white" />
-          <Text className="text-white text-xl font-semibold">Settings</Text>
-        </View>
-        <TouchableOpacity onPress={() => router.push('/(tabs)/settings/register')} disabled={isDeleting}>
-          <Text className="text-indigo-400 font-semibold text-base">Edit</Text>
+    <View style={{ flex: 1, backgroundColor: '#0F0F2D', paddingTop: 16 }}>
+      {/* Header */}
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        marginBottom: 24,
+      }}>
+        <Text style={{ color: 'white', fontSize: 22, fontWeight: '700' }}>Profile</Text>
+        <TouchableOpacity
+          onPress={() => router.push('/(tabs)/settings/register')}
+          disabled={isDeleting}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: 'rgba(124, 58, 237, 0.15)',
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            borderRadius: 12,
+            gap: 6,
+          }}
+        >
+          <Edit3 size={14} color="#7C3AED" />
+          <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 13 }}>Edit</Text>
         </TouchableOpacity>
       </View>
-      <ScrollView className="px-4 pt-4">
-        <View className="items-center mb-6">
-          <Image
-            source={{ uri: user?.profile_picture || 'https://via.placeholder.com/150' }}
-            className="w-24 h-24 rounded-full mb-2 border-4 border-[#5B2EFF]"
-          />
-          <Text className="text-white text-lg font-semibold">{user?.user_name || 'Anonymous'}</Text>
-          <Text className="text-gray-400 text-sm">{user?.gender || 'Gender not set'}</Text>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}>
+        {/* Profile Card */}
+        <View style={{
+          backgroundColor: '#161638',
+          borderRadius: 20,
+          padding: 24,
+          alignItems: 'center',
+          marginBottom: 20,
+          borderWidth: 1,
+          borderColor: 'rgba(124, 58, 237, 0.1)',
+        }}>
+          <View style={{
+            width: 80,
+            height: 80,
+            borderRadius: 40,
+            backgroundColor: '#7C3AED',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 14,
+          }}>
+            <Text style={{ color: 'white', fontSize: 32, fontWeight: '700' }}>{getInitial()}</Text>
+          </View>
+          <Text style={{ color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
+            {user?.user_name || 'Anonymous'}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name={getGenderIcon()} size={14} color="#8888AA" />
+            <Text style={{ color: '#8888AA', fontSize: 13 }}>{user?.gender || 'Not set'}</Text>
+          </View>
         </View>
-        <View className="bg-[#2E2E4D] rounded-xl p-4 mb-6">
-          <Text className="text-white font-semibold mb-1">About me</Text>
-          <Text className="text-gray-300">{user?.bio || 'No bio set'}</Text>
+
+        {/* Bio Section */}
+        <View style={{
+          backgroundColor: '#161638',
+          borderRadius: 16,
+          padding: 16,
+          marginBottom: 20,
+          borderWidth: 1,
+          borderColor: 'rgba(124, 58, 237, 0.08)',
+        }}>
+          <Text style={{ color: '#A78BFA', fontSize: 11, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            About Me
+          </Text>
+          <Text style={{ color: user?.bio ? '#C4C4E0' : '#64648F', fontSize: 14, lineHeight: 20 }}>
+            {user?.bio || 'No bio set. Tap Edit to add one!'}
+          </Text>
         </View>
-        <View className="flex-col gap-3 mb-6">
-          <Option icon="notifications-outline" label="Notifications" onPress={() => handleOptionPress('Notifications')} />
-          <Option icon="lock-closed-outline" label="Privacy" onPress={() => handleOptionPress('Privacy')} />
-          <Option icon="language-outline" label="Language" onPress={() => handleOptionPress('Language')} />
-          <Option icon="color-palette-outline" label="Theme" onPress={() => handleOptionPress('Theme')} />
+
+        {/* Settings Options */}
+        <Text style={{ color: '#64648F', fontSize: 11, fontWeight: '600', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5, paddingLeft: 4 }}>
+          Settings
+        </Text>
+        <View style={{
+          backgroundColor: '#161638',
+          borderRadius: 16,
+          overflow: 'hidden',
+          marginBottom: 20,
+          borderWidth: 1,
+          borderColor: 'rgba(124, 58, 237, 0.08)',
+        }}>
+          {[
+            { icon: Bell, label: 'Notifications', color: '#F59E0B' },
+            { icon: Lock, label: 'Privacy', color: '#10B981' },
+            { icon: Globe, label: 'Language', color: '#3B82F6' },
+          ].map((item, index, arr) => (
+            <TouchableOpacity
+              key={item.label}
+              onPress={() => handleOptionPress(item.label)}
+              activeOpacity={0.6}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 16,
+                borderBottomWidth: index < arr.length - 1 ? 1 : 0,
+                borderBottomColor: 'rgba(124, 58, 237, 0.06)',
+              }}
+            >
+              <View style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                backgroundColor: `${item.color}15`,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 14,
+              }}>
+                <item.icon size={17} color={item.color} />
+              </View>
+              <Text style={{ color: 'white', fontSize: 15, fontWeight: '500', flex: 1 }}>{item.label}</Text>
+              <ChevronRight size={18} color="#64648F" />
+            </TouchableOpacity>
+          ))}
         </View>
+
+        {/* Danger Zone */}
+        <Text style={{ color: '#64648F', fontSize: 11, fontWeight: '600', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5, paddingLeft: 4 }}>
+          Danger Zone
+        </Text>
         <TouchableOpacity
           onPress={() => setDeleteModalVisible(true)}
           disabled={isDeleting}
-          className={`bg-red-600 rounded-xl p-4 flex-row items-center justify-center ${isDeleting ? 'opacity-50' : ''}`}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            borderRadius: 16,
+            padding: 16,
+            borderWidth: 1,
+            borderColor: 'rgba(239, 68, 68, 0.15)',
+            opacity: isDeleting ? 0.5 : 1,
+          }}
         >
-          <Ionicons name="trash-outline" size={24} color="white" />
-          <Text className="text-white text-base font-semibold ml-3">Delete Account</Text>
+          <View style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginRight: 14,
+          }}>
+            <Trash2 size={17} color="#EF4444" />
+          </View>
+          <Text style={{ color: '#EF4444', fontSize: 15, fontWeight: '500', flex: 1 }}>Delete Account</Text>
+          <ChevronRight size={18} color="#EF4444" />
         </TouchableOpacity>
-        <View className="h-20" />
+
+        {/* App Version */}
+        <Text style={{ color: '#3A3A5C', fontSize: 12, textAlign: 'center', marginTop: 24 }}>
+          Zu.Chat v1.0.0
+        </Text>
       </ScrollView>
+
+      {/* Delete Account Modal */}
       <Modal
         visible={isDeleteModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setDeleteModalVisible(false)}
       >
-        <View className="flex-1 justify-center items-center bg-black/50 px-6">
-          <View className="bg-[#2E2E4D] rounded-xl p-6 w-full max-w-md">
-            <Text className="text-white text-lg font-semibold mb-3">Delete Account</Text>
-            <Text className="text-gray-300 mb-5">
-              Are you sure you want to delete your account? This action is permanent and cannot be undone.
+        <View style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          paddingHorizontal: 32,
+        }}>
+          <View style={{
+            backgroundColor: '#161638',
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 340,
+            borderWidth: 1,
+            borderColor: 'rgba(239, 68, 68, 0.15)',
+          }}>
+            <View style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'center',
+              marginBottom: 16,
+            }}>
+              <Trash2 size={22} color="#EF4444" />
+            </View>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+              Delete Account?
             </Text>
-            <View className="flex-row justify-between">
+            <Text style={{ color: '#8888AA', fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
+              This action is permanent and cannot be undone. All your data, friends, and chat history will be lost.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 onPress={() => setDeleteModalVisible(false)}
-                className="bg-gray-500 py-2 px-4 rounded-xl flex-1 mr-2 items-center"
+                activeOpacity={0.7}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                }}
               >
-                <Text className="text-white font-medium">Cancel</Text>
+                <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleDeleteAccount}
                 disabled={isDeleting}
-                className={`bg-red-600 py-2 px-4 rounded-xl flex-1 ml-2 items-center ${isDeleting ? 'opacity-50' : ''}`}
+                activeOpacity={0.7}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  backgroundColor: '#EF4444',
+                  opacity: isDeleting ? 0.5 : 1,
+                }}
               >
-                <Text className="text-white font-medium">{isDeleting ? 'Deleting...' : 'Delete'}</Text>
+                <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

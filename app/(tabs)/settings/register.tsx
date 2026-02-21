@@ -4,39 +4,43 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Pressable,
   ActivityIndicator,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Shuffle, X, Check, MessageCircle } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
 import useSocketStore from '@/store/useSocketStore';
 import api from '@/utils/api';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-type RootStackParamList = {
-  '(tabs)/home': undefined;
-  '(tabs)/settings/register': undefined;
-};
+const genders = [
+  { value: 'Male', icon: 'male', color: '#3B82F6' },
+  { value: 'Female', icon: 'female', color: '#EC4899' },
+  { value: 'Unknown', icon: 'person', color: '#8B5CF6' },
+];
 
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
-
-const genders = ['Male', 'Female', 'Unknown'];
+const randomNames = [
+  'StarGazer', 'MoonWalker', 'SkyDiver', 'DreamChaser', 'NightOwl', 'SunChaser',
+  'CloudRunner', 'NeonShadow', 'CosmicDust', 'PixelDream', 'ThunderBolt', 'SilverFox',
+  'CyberNinja', 'AquaPhoenix', 'NebulaKid', 'IronWolf', 'CrystalVibe', 'SonicBoom',
+];
 
 const SetUpProfile = () => {
-  const { user, setUser, clearUser } = useUserStore();
+  const { user, setUser } = useUserStore();
   const { socket, connectSocket, connectionStatus } = useSocketStore();
-  const navigation = useNavigation<NavigationProp>();
+  const navigation = useNavigation();
 
   const [user_name, setUserName] = useState('');
   const [bio, setBio] = useState('');
   const [gender, setGender] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] SetUpProfile: ${message}`, data || '');
-  };
+  const isNewUser = !user?._id;
 
   useEffect(() => {
     if (user) {
@@ -52,29 +56,15 @@ const SetUpProfile = () => {
 
   const handleSave = async () => {
     if (!user_name.trim() || !gender) {
-      Toast.show({
-        type: 'error',
-        text1: 'Missing Fields',
-        text2: 'Please fill in username and gender.',
-      });
+      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in nickname and gender.' });
       return;
     }
-
     if (user_name.length > 20) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Username',
-        text2: 'Username cannot exceed 20 characters.',
-      });
+      Toast.show({ type: 'error', text1: 'Too Long', text2: 'Nickname cannot exceed 20 characters.' });
       return;
     }
-
     if (bio.length > 200) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Bio',
-        text2: 'Bio cannot exceed 200 characters.',
-      });
+      Toast.show({ type: 'error', text1: 'Too Long', text2: 'Bio cannot exceed 200 characters.' });
       return;
     }
 
@@ -91,155 +81,268 @@ const SetUpProfile = () => {
       const isExistingUser = user?._id && /^[0-9a-fA-F]{24}$/.test(user._id);
 
       if (isExistingUser) {
-        log('Updating existing user', { userId: user._id });
-        response = await api.post('/api/users/update', {
-          ...payload,
-          userId: user._id,
-        });
+        response = await api.post('/api/users/update', { ...payload, userId: user._id });
       } else {
-        log('Creating new user');
         response = await api.post('/api/users/create', payload);
       }
 
       const newUser = response.data.user;
       setUser(newUser);
-      log('User saved', { userId: newUser._id, user_name: newUser.user_name });
 
       if (socket?.connected && newUser._id) {
-        socket.emit('set_username', {
-          userId: newUser._id,
-          username: newUser.user_name || 'Anonymous',
-        });
-        log('Emitted set_username', { userId: newUser._id, username: newUser.user_name });
+        socket.emit('set_username', { userId: newUser._id, username: newUser.user_name || 'Anonymous' });
       }
 
       if (newUser._id && /^[0-9a-fA-F]{24}$/.test(newUser._id)) {
         if (!socket?.connected || connectionStatus === 'disconnected') {
           connectSocket(newUser._id);
-          log('Connecting socket', { userId: newUser._id });
         }
       } else {
-        log('Invalid user ID for socket connection', { userId: newUser._id });
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Invalid user ID.',
-        });
+        Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user ID.' });
         setIsSaving(false);
         return;
       }
 
       Toast.show({
         type: 'success',
-        text1: isExistingUser ? 'Profile Updated' : 'Profile Created',
-        text2: `Your profile has been ${isExistingUser ? 'updated' : 'created'}! 🎉`,
+        text1: isExistingUser ? 'Profile Updated' : 'Welcome!',
+        text2: isExistingUser ? 'Your changes have been saved.' : 'Your profile is ready. Start chatting!',
       });
-      navigation.goBack();
+
+      if (isExistingUser) {
+        navigation.goBack();
+      } else {
+        router.replace('/(tabs)/home');
+      }
     } catch (error: any) {
-      log('Profile setup error', {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
       const errorMessage = error.response?.data?.message || 'Failed to save profile. Please try again.';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: errorMessage });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleRandomUsername = () => {
-    const randomNames = ['StarGazer', 'MoonWalker', 'SkyDiver', 'DreamChaser', 'NightOwl', 'SunChaser'];
     setUserName(randomNames[Math.floor(Math.random() * randomNames.length)]);
   };
 
   return (
-    <View className="flex-1 bg-[#1C1C3A]">
-      <View className="flex-row items-center justify-between px-4 py-5 border-b border-gray-700 bg-[#1C1C3A]">
-        <TouchableOpacity onPress={() => navigation.goBack()} disabled={isSaving}>
-          <Text className={`text-white font-medium text-base ${isSaving ? 'opacity-50' : ''}`}>Cancel</Text>
-        </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Set Up Profile</Text>
-        <TouchableOpacity onPress={handleSave} disabled={isSaving}>
-          {isSaving ? (
-            <ActivityIndicator size="small" color="#5B2EFF" />
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={{ flex: 1, backgroundColor: '#0F0F2D', paddingTop: 16 }}>
+        {/* Header */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 20,
+          marginBottom: 8,
+        }}>
+          {isNewUser ? (
+            <View style={{ width: 60 }} />
           ) : (
-            <Text className="text-indigo-400 font-medium text-base">Save</Text>
+            <TouchableOpacity onPress={() => navigation.goBack()} disabled={isSaving} style={{ padding: 4 }}>
+              <X size={22} color={isSaving ? '#64648F' : '#8888AA'} />
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
-      </View>
-
-      <View className="flex-1 px-6 pt-8">
-        <View className="mb-8">
-          <View className="flex-row items-center gap-2 mb-2">
-            <Ionicons name="person-outline" size={18} color="white" />
-            <Text className="text-white font-medium">Nickname</Text>
-          </View>
-          <Text className="text-gray-400 text-sm mb-3">Nickname will be shown in chat</Text>
-          <TextInput
-            placeholder="Enter your nickname"
-            placeholderTextColor="#A0A0A0"
-            value={user_name}
-            onChangeText={setUserName}
-            className="bg-[#2E2E4D] text-white p-4 rounded-xl"
-            maxLength={20}
-            editable={!isSaving}
-          />
+          <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>
+            {isNewUser ? 'Create Profile' : 'Edit Profile'}
+          </Text>
           <TouchableOpacity
-            onPress={handleRandomUsername}
-            className="bg-indigo-600 py-3 rounded-xl mt-3 active:scale-95"
-            disabled={isSaving}
+            onPress={handleSave}
+            disabled={isSaving || !user_name.trim() || !gender}
+            activeOpacity={0.7}
+            style={{
+              backgroundColor: user_name.trim() && gender ? '#7C3AED' : 'rgba(124, 58, 237, 0.15)',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 10,
+            }}
           >
-            <Text className="text-white font-medium text-center">Generate Random Nickname</Text>
+            {isSaving ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text style={{ color: user_name.trim() && gender ? 'white' : '#64648F', fontWeight: '600', fontSize: 13 }}>
+                {isNewUser ? 'Start' : 'Save'}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
 
-        <View className="mb-8">
-          <View className="flex-row items-center gap-2 mb-2">
-            <Ionicons name="information-circle-outline" size={18} color="white" />
-            <Text className="text-white font-medium">About Me</Text>
-          </View>
-          <Text className="text-gray-400 text-sm mb-3">Add a few words about yourself to interest your partner</Text>
-          <TextInput
-            placeholder="Tell us about yourself"
-            placeholderTextColor="#A0A0A0"
-            value={bio}
-            onChangeText={setBio}
-            className="bg-[#2E2E4D] text-white p-4 rounded-xl h-32"
-            multiline
-            textAlignVertical="top"
-            maxLength={200}
-            editable={!isSaving}
-          />
-        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 }}>
+          {/* Welcome Banner for new users */}
+          {isNewUser && (
+            <View style={{
+              backgroundColor: 'rgba(124, 58, 237, 0.08)',
+              borderRadius: 16,
+              padding: 20,
+              alignItems: 'center',
+              marginBottom: 28,
+              borderWidth: 1,
+              borderColor: 'rgba(124, 58, 237, 0.12)',
+            }}>
+              <View style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: '#7C3AED',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 12,
+              }}>
+                <MessageCircle size={24} color="white" fill="white" />
+              </View>
+              <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', marginBottom: 4 }}>Welcome to Zu.Chat</Text>
+              <Text style={{ color: '#8888AA', fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
+                Set up your profile to start chatting{'\n'}with people around the world.
+              </Text>
+            </View>
+          )}
 
-        <View className="mb-8">
-          <View className="flex-row items-center gap-2 mb-2">
-            <Ionicons name="person-circle-outline" size={18} color="white" />
-            <Text className="text-white font-medium">My Gender</Text>
-          </View>
-          <Text className="text-gray-400 text-sm mb-3">Choose your gender to get better matches</Text>
-          <View className="flex-col gap-3">
-            {genders.map((g) => (
-              <Pressable
-                key={g}
-                onPress={() => setGender(g)}
+          {/* Nickname */}
+          <View style={{ marginBottom: 24 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600' }}>Nickname</Text>
+              <Text style={{ color: user_name.length > 16 ? '#F59E0B' : '#64648F', fontSize: 12 }}>
+                {user_name.length}/20
+              </Text>
+            </View>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#161638',
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: user_name.trim() ? 'rgba(124, 58, 237, 0.2)' : 'rgba(124, 58, 237, 0.06)',
+              paddingRight: 6,
+            }}>
+              <TextInput
+                placeholder="Choose a nickname"
+                placeholderTextColor="#64648F"
+                value={user_name}
+                onChangeText={setUserName}
+                style={{
+                  flex: 1,
+                  color: 'white',
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  fontSize: 15,
+                }}
+                maxLength={20}
+                editable={!isSaving}
+              />
+              <TouchableOpacity
+                onPress={handleRandomUsername}
                 disabled={isSaving}
-                className={`py-3 px-4 rounded-xl active:scale-95 ${
-                  gender === g ? 'bg-indigo-600' : 'bg-[#2E2E4D]'
-                }`}
+                activeOpacity={0.7}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(124, 58, 237, 0.15)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
               >
-                <Text className="text-white font-medium">{g}</Text>
-              </Pressable>
-            ))}
+                <Shuffle size={16} color="#7C3AED" />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: '#64648F', fontSize: 12, marginTop: 6, paddingLeft: 2 }}>
+              This is how others will see you in chat
+            </Text>
           </View>
-        </View>
+
+          {/* About Me */}
+          <View style={{ marginBottom: 24 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600' }}>About Me</Text>
+              <Text style={{ color: bio.length > 180 ? '#F59E0B' : '#64648F', fontSize: 12 }}>
+                {bio.length}/200
+              </Text>
+            </View>
+            <TextInput
+              placeholder="Tell others something interesting about yourself..."
+              placeholderTextColor="#64648F"
+              value={bio}
+              onChangeText={setBio}
+              style={{
+                backgroundColor: '#161638',
+                color: 'white',
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                borderRadius: 14,
+                height: 100,
+                fontSize: 15,
+                textAlignVertical: 'top',
+                borderWidth: 1,
+                borderColor: bio.trim() ? 'rgba(124, 58, 237, 0.2)' : 'rgba(124, 58, 237, 0.06)',
+              }}
+              multiline
+              maxLength={200}
+              editable={!isSaving}
+            />
+            <Text style={{ color: '#64648F', fontSize: 12, marginTop: 6, paddingLeft: 2 }}>
+              Optional - helps your chat partners get to know you
+            </Text>
+          </View>
+
+          {/* Gender */}
+          <View style={{ marginBottom: 24 }}>
+            <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginBottom: 8 }}>Gender</Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              {genders.map((g) => (
+                <TouchableOpacity
+                  key={g.value}
+                  onPress={() => setGender(g.value)}
+                  disabled={isSaving}
+                  activeOpacity={0.7}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 14,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                    backgroundColor: gender === g.value ? 'rgba(124, 58, 237, 0.15)' : '#161638',
+                    borderWidth: 1.5,
+                    borderColor: gender === g.value ? '#7C3AED' : 'rgba(124, 58, 237, 0.06)',
+                  }}
+                >
+                  <Ionicons
+                    name={g.icon as any}
+                    size={22}
+                    color={gender === g.value ? '#7C3AED' : '#64648F'}
+                  />
+                  <Text style={{
+                    color: gender === g.value ? 'white' : '#8888AA',
+                    fontSize: 12,
+                    fontWeight: '600',
+                    marginTop: 6,
+                  }}>
+                    {g.value}
+                  </Text>
+                  {gender === g.value && (
+                    <View style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      width: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      backgroundColor: '#7C3AED',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      <Check size={10} color="white" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={{ color: '#64648F', fontSize: 12, marginTop: 6, paddingLeft: 2 }}>
+              Helps with match preferences
+            </Text>
+          </View>
+        </ScrollView>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
