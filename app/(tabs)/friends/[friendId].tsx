@@ -171,7 +171,7 @@ const FriendChat = () => {
   }, [socket, connectionStatus, friendId, user?._id, startFriendChat]);
 
   useEffect(() => {
-    if (!socket || !isChatInitialized.current || !partnerId) return;
+    if (!socket || !partnerId) return;
 
     const messageListener = ({
       message,
