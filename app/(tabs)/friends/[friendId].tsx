@@ -73,7 +73,7 @@ const FriendChat = () => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
-  const [isSending, setIsSending] = useState(false);
+  const isSending = useRef(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const isChatInitialized = useRef(false);
@@ -137,11 +137,16 @@ const FriendChat = () => {
         setMessages([]);
         const fetchedMessages = await fetchChatHistory(friendId);
         setMessages((prev) => {
-          const existingIds = new Set(prev.map((msg) => msg.messageId));
-          const existingContent = new Set(prev.map((msg) => `${msg.text}:${msg.sender}`));
-          const newMessages = fetchedMessages.filter(
-            (msg) => !existingIds.has(msg.messageId) && !existingContent.has(`${msg.text}:${msg.sender}`)
-          );
+          const existingIds = new Set(prev.map((msg) => msg.messageId).filter(Boolean));
+          const newMessages = fetchedMessages.filter((msg) => {
+            if (msg.messageId && existingIds.has(msg.messageId)) return false;
+            return !prev.some(
+              (existing) =>
+                existing.text === msg.text &&
+                existing.sender === msg.sender &&
+                Math.abs(existing.timestamp - msg.timestamp) < DEDUPE_WINDOW
+            );
+          });
           return [...prev, ...newMessages];
         });
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -187,17 +192,17 @@ const FriendChat = () => {
       if (!isMounted.current || fromUserId === user?._id) return;
       if (fromUserId === partnerId) {
         setMessages((prev): any => {
-          const existingIds = new Set(prev.map((msg) => msg.messageId));
-          const existingContent = new Set(prev.map((msg) => `${msg.text}:${msg.sender}`));
-          const isDuplicate =
-            (messageId && existingIds.has(messageId)) ||
-            existingContent.has(`${message}:friend`) ||
-            prev.some(
-              (msg) =>
-                msg.text === message &&
-                msg.sender === 'friend' &&
-                Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW
-            );
+          // Dedup by messageId if available
+          if (messageId && prev.some((msg) => msg.messageId === messageId)) {
+            return prev;
+          }
+          // Dedup by same text + sender within time window
+          const isDuplicate = prev.some(
+            (msg) =>
+              msg.text === message &&
+              msg.sender === 'friend' &&
+              Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW
+          );
           if (isDuplicate) return prev;
           const newMessage = { messageId, text: message, sender: 'friend', timestamp, seen: false };
           flatListRef.current?.scrollToEnd({ animated: true });
@@ -209,8 +214,15 @@ const FriendChat = () => {
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
+      // Mark all unseen user messages up to the seen timestamp as read.
+      // Uses tolerance (+2s) to account for client vs server clock differences.
       setMessages((prev) =>
-        prev.map((msg) => (msg.sender === 'user' && msg.timestamp === timestamp ? { ...msg, seen: true } : msg))
+        prev.map((msg) => {
+          if (msg.sender === 'user' && !msg.seen && msg.timestamp <= timestamp + 2000) {
+            return { ...msg, seen: true };
+          }
+          return msg;
+        })
       );
     };
 
@@ -234,30 +246,28 @@ const FriendChat = () => {
     router.replace('/(tabs)/friends');
   };
 
-  const handleSendMessage = async () => {
-    if (isSending) return;
-    setIsSending(true);
-    if (!input.trim()) {
-      setIsSending(false);
-      return;
-    }
+  const handleSendMessage = () => {
+    const messageText = input.trim();
+    if (!messageText || !user?._id || !partnerId || connectionStatus === 'disconnected') return;
+    // Brief guard to prevent double-tap (reset immediately after state updates)
+    if (isSending.current) return;
+    isSending.current = true;
+
     const timestamp = Date.now();
-    const messageId = `${user?._id}-${timestamp}`;
-    const newMessage = { messageId, text: input, sender: 'user', timestamp, seen: false };
+    const messageId = `${user._id}-${timestamp}`;
+    const newMessage = { messageId, text: messageText, sender: 'user', timestamp, seen: false };
     setMessages((prev): any => [...prev, newMessage]);
     setInput('');
     flatListRef.current?.scrollToEnd({ animated: true });
 
-    try {
-      // HTTP sendMessage saves to DB and emits receive_message to the socket room.
-      // Do NOT also emit send_message via socket — that causes double delivery.
-      await sendMessage(friendId, input);
-    } catch (error: any) {
+    // Release send lock after state updates so next message can be sent immediately
+    setTimeout(() => { isSending.current = false; }, 100);
+
+    // Fire-and-forget: HTTP saves to DB and emits receive_message to the socket room.
+    sendMessage(friendId, messageText).catch(() => {
       setMessages((prev) => prev.filter((msg) => msg.messageId !== messageId));
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to send message.' });
-    } finally {
-      setIsSending(false);
-    }
+    });
   };
 
   const handleTyping = useCallback(() => {
@@ -417,7 +427,7 @@ const FriendChat = () => {
             />
             <TouchableOpacity
               onPress={handleSendMessage}
-              disabled={isSending || connectionStatus === 'disconnected' || !input.trim()}
+              disabled={connectionStatus === 'disconnected' || !input.trim()}
               activeOpacity={0.7}
               style={{
                 width: 38,
