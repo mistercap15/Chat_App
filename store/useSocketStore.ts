@@ -7,6 +7,7 @@ import Toast from 'react-native-toast-message';
 import useUserStore from './useUserStore';
 import useAuthStore from './useAuthStore';
 import useFriendRequestStore from './useFriendRequestStore';
+import useUnreadStore from './useUnreadStore';
 
 interface SocketStore {
   socket: any | null;
@@ -58,6 +59,14 @@ const useSocketStore = create<SocketStore>((set, get) => {
 
     newSocket.on('friend_added', ({ friendId, friendUsername }: any) => {
       log('Global: friend_added', { friendId, friendUsername });
+    });
+
+    // Track unread message counts globally — only for friend chat messages
+    // received when the user is NOT actively viewing that friend's chat.
+    newSocket.on('receive_message', ({ fromUserId }: any) => {
+      if (fromUserId && fromUserId !== userId) {
+        useUnreadStore.getState().incrementUnread(fromUserId);
+      }
     });
 
     newSocket.on('connect', () => {

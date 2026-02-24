@@ -3,11 +3,13 @@ import { MessageCircle, Users, User } from "lucide-react-native";
 import { ThemeProvider, useTheme } from "@/context/ThemeContext";
 import ThemedLayout from "@/components/ThemedLayout";
 import { useEffect } from "react";
-import { View } from "react-native";
+import { View, Text } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import Toast from "react-native-toast-message";
 import { BlurView } from "expo-blur";
 import usePushNotifications from "@/hooks/usePushNotifications";
+import useUnreadStore from "@/store/useUnreadStore";
+import useFriendRequestStore from "@/store/useFriendRequestStore";
 
 export default function Layout() {
   return (
@@ -20,6 +22,11 @@ export default function Layout() {
 function LayoutContent() {
   const { isDarkMode } = useTheme();
   usePushNotifications();
+
+  const unreadCounts = useUnreadStore((s) => s.unreadCounts);
+  const totalUnread = Object.values(unreadCounts).reduce((sum, c) => sum + c, 0);
+  const pendingRequestCount = useFriendRequestStore((s) => s.pendingRequests.length);
+  const friendsBadgeCount = totalUnread + pendingRequestCount;
 
   useEffect(() => {
     SystemUI.setBackgroundColorAsync("#0F0F2D");
@@ -95,17 +102,39 @@ function LayoutContent() {
             options={{
               title: "Friends",
               tabBarIcon: ({ color, focused }) => (
-                <View style={focused ? {
-                  backgroundColor: "rgba(124, 58, 237, 0.18)",
-                  borderRadius: 14,
-                  paddingHorizontal: 14,
-                  paddingVertical: 5,
-                } : { paddingHorizontal: 14, paddingVertical: 5 }}>
-                  <Users
-                    color={color}
-                    size={20}
-                    fill={focused ? color : "transparent"}
-                  />
+                <View style={{ position: "relative" }}>
+                  <View style={focused ? {
+                    backgroundColor: "rgba(124, 58, 237, 0.18)",
+                    borderRadius: 14,
+                    paddingHorizontal: 14,
+                    paddingVertical: 5,
+                  } : { paddingHorizontal: 14, paddingVertical: 5 }}>
+                    <Users
+                      color={color}
+                      size={20}
+                      fill={focused ? color : "transparent"}
+                    />
+                  </View>
+                  {friendsBadgeCount > 0 && (
+                    <View style={{
+                      position: "absolute",
+                      top: -4,
+                      right: 2,
+                      minWidth: 18,
+                      height: 18,
+                      borderRadius: 9,
+                      backgroundColor: "#EF4444",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingHorizontal: 4,
+                      borderWidth: 2,
+                      borderColor: "rgba(16, 14, 44, 0.92)",
+                    }}>
+                      <Text style={{ color: "white", fontSize: 10, fontWeight: "700" }}>
+                        {friendsBadgeCount > 99 ? "99+" : friendsBadgeCount}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               ),
             }}

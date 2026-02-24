@@ -8,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
 import useSocketStore from '@/store/useSocketStore';
 import useFriendRequestStore from '@/store/useFriendRequestStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import api from '@/utils/api';
 
 interface Friend {
@@ -19,6 +20,7 @@ const Friends = () => {
   const { user } = useUserStore();
   const { socket, connectSocket } = useSocketStore();
   const { pendingRequests, fetchPendingRequests, acceptFriendRequest, rejectFriendRequest } = useFriendRequestStore();
+  const { unreadCounts, clearUnread } = useUnreadStore();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,6 +115,7 @@ const Friends = () => {
   };
 
   const navigateToFriendChat = (friendId: string) => {
+    clearUnread(friendId);
     router.push(`/friends/${friendId}`);
   };
 
@@ -184,75 +187,103 @@ const Friends = () => {
     </View>
   );
 
-  const renderFriend = ({ item }: { item: Friend }) => (
-    <TouchableOpacity
-      onPress={() => navigateToFriendChat(item._id)}
-      onLongPress={() => {
-        setSelectedFriend(item);
-        setRemoveModalVisible(true);
-      }}
-      activeOpacity={0.7}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#161638',
-        borderRadius: 14,
-        padding: 14,
-        marginBottom: 8,
-        borderWidth: 1,
-        borderColor: 'rgba(124, 58, 237, 0.08)',
-      }}
-    >
-      <View style={{
-        width: 46,
-        height: 46,
-        borderRadius: 23,
-        backgroundColor: getAvatarColor(item._id),
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 14,
-      }}>
-        <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>{getInitial(item.user_name)}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{item.user_name || 'Anonymous'}</Text>
-        <Text style={{ color: '#64648F', fontSize: 12, marginTop: 2 }}>Tap to chat</Text>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <TouchableOpacity
-          onPress={() => navigateToFriendChat(item._id)}
-          activeOpacity={0.7}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: 'rgba(124, 58, 237, 0.15)',
+  const renderFriend = ({ item }: { item: Friend }) => {
+    const unreadCount = unreadCounts[item._id] || 0;
+
+    return (
+      <TouchableOpacity
+        onPress={() => navigateToFriendChat(item._id)}
+        onLongPress={() => {
+          setSelectedFriend(item);
+          setRemoveModalVisible(true);
+        }}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: '#161638',
+          borderRadius: 14,
+          padding: 14,
+          marginBottom: 8,
+          borderWidth: 1,
+          borderColor: unreadCount > 0 ? 'rgba(124, 58, 237, 0.25)' : 'rgba(124, 58, 237, 0.08)',
+        }}
+      >
+        {/* Avatar with unread badge */}
+        <View style={{ position: 'relative', marginRight: 14 }}>
+          <View style={{
+            width: 46,
+            height: 46,
+            borderRadius: 23,
+            backgroundColor: getAvatarColor(item._id),
             alignItems: 'center',
             justifyContent: 'center',
-          }}
-        >
-          <MessageCircle size={16} color="#7C3AED" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            setSelectedFriend(item);
-            setRemoveModalVisible(true);
-          }}
-          activeOpacity={0.7}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: 'rgba(239, 68, 68, 0.08)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <UserX size={16} color="#EF4444" />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+          }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>{getInitial(item.user_name)}</Text>
+          </View>
+          {unreadCount > 0 && (
+            <View style={{
+              position: 'absolute',
+              top: -4,
+              right: -4,
+              minWidth: 20,
+              height: 20,
+              borderRadius: 10,
+              backgroundColor: '#7C3AED',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 5,
+              borderWidth: 2,
+              borderColor: '#161638',
+            }}>
+              <Text style={{ color: 'white', fontSize: 11, fontWeight: '700' }}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{item.user_name || 'Anonymous'}</Text>
+          <Text style={{ color: unreadCount > 0 ? '#A78BFA' : '#64648F', fontSize: 12, marginTop: 2 }}>
+            {unreadCount > 0 ? `${unreadCount} new message${unreadCount > 1 ? 's' : ''}` : 'Tap to chat'}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TouchableOpacity
+            onPress={() => navigateToFriendChat(item._id)}
+            activeOpacity={0.7}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: 'rgba(124, 58, 237, 0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <MessageCircle size={16} color="#7C3AED" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              setSelectedFriend(item);
+              setRemoveModalVisible(true);
+            }}
+            activeOpacity={0.7}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <UserX size={16} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderHeader = () => (
     <>

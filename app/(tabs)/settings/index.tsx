@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import useUserStore from '@/store/useUserStore';
 import useAuthStore from '@/store/useAuthStore';
 import useSocketStore from '@/store/useSocketStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import api from '@/utils/api';
 import Toast from 'react-native-toast-message';
 import { removePushTokenFromBackend } from '@/utils/notifications';
@@ -15,6 +16,7 @@ const Settings = () => {
   const { user, clearUser }: any = useUserStore();
   const { clearToken } = useAuthStore();
   const { socket, disconnectSocket } = useSocketStore();
+  const { clearAll: clearUnreadCounts } = useUnreadStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -24,6 +26,7 @@ const Settings = () => {
       if (userId === user?._id) {
         clearUser();
         clearToken();
+        clearUnreadCounts();
         disconnectSocket();
         setIsDeleting(false);
         setDeleteModalVisible(false);
@@ -44,6 +47,7 @@ const Settings = () => {
       await api.delete('/api/users/account');
       clearUser();
       clearToken();
+      clearUnreadCounts();
       disconnectSocket();
       setIsDeleting(false);
       setDeleteModalVisible(false);

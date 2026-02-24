@@ -9,6 +9,7 @@ import Toast from 'react-native-toast-message';
 import useSocketStore from '@/store/useSocketStore';
 import useUserStore from '@/store/useUserStore';
 import useFriendChatStore from '@/store/useFriendChatStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import api from '@/utils/api';
 
 interface Message {
@@ -112,6 +113,17 @@ const FriendChat = () => {
       cleanup();
     };
   }, [socket, initializeListeners]);
+
+  // Track which friend chat is active so unread counts are suppressed
+  useEffect(() => {
+    if (friendId && /^[0-9a-fA-F]{24}$/.test(friendId)) {
+      useUnreadStore.getState().setActiveChatFriendId(friendId);
+      useUnreadStore.getState().clearUnread(friendId);
+    }
+    return () => {
+      useUnreadStore.getState().setActiveChatFriendId(null);
+    };
+  }, [friendId]);
 
   useEffect(() => {
     if (!friendId || !/^[0-9a-fA-F]{24}$/.test(friendId) || !user?._id) {
