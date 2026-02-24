@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { View } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import Toast from "react-native-toast-message";
+import { BlurView } from "expo-blur";
 
 export default function Layout() {
   return (
@@ -30,21 +31,40 @@ function LayoutContent() {
             headerShown: false,
             tabBarHideOnKeyboard: true,
             tabBarStyle: {
-              backgroundColor: "#161638",
-              height: 65,
-              paddingBottom: 8,
-              paddingTop: 8,
-              borderTopWidth: 1,
-              borderTopColor: "rgba(91, 46, 255, 0.15)",
+              backgroundColor: "transparent",
+              borderTopWidth: 0,
+              height: 62,
+              marginHorizontal: 20,
+              marginBottom: 18,
+              marginTop: 4,
+              borderRadius: 32,
+              overflow: "hidden",
               elevation: 0,
               shadowOpacity: 0,
             },
+            tabBarBackground: () => (
+              <BlurView
+                intensity={50}
+                tint="dark"
+                style={{
+                  flex: 1,
+                  backgroundColor: "rgba(16, 14, 44, 0.92)",
+                  borderRadius: 32,
+                  borderWidth: 1,
+                  borderColor: "rgba(124, 58, 237, 0.22)",
+                  overflow: "hidden",
+                }}
+              />
+            ),
             tabBarActiveTintColor: "#7C3AED",
-            tabBarInactiveTintColor: "#64648F",
+            tabBarInactiveTintColor: "#4A4A72",
             tabBarLabelStyle: {
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: "600",
-              marginTop: 2,
+              marginTop: 1,
+            },
+            tabBarItemStyle: {
+              paddingVertical: 6,
             },
           }}
         >
@@ -54,13 +74,14 @@ function LayoutContent() {
               title: "Chat",
               tabBarIcon: ({ color, focused }) => (
                 <View style={focused ? {
-                  backgroundColor: "rgba(124, 58, 237, 0.15)",
-                  borderRadius: 12,
-                  padding: 6,
-                } : { padding: 6 }}>
+                  backgroundColor: "rgba(124, 58, 237, 0.18)",
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 5,
+                } : { paddingHorizontal: 14, paddingVertical: 5 }}>
                   <MessageCircle
                     color={color}
-                    size={22}
+                    size={20}
                     fill={focused ? color : "transparent"}
                   />
                 </View>
@@ -73,13 +94,14 @@ function LayoutContent() {
               title: "Friends",
               tabBarIcon: ({ color, focused }) => (
                 <View style={focused ? {
-                  backgroundColor: "rgba(124, 58, 237, 0.15)",
-                  borderRadius: 12,
-                  padding: 6,
-                } : { padding: 6 }}>
+                  backgroundColor: "rgba(124, 58, 237, 0.18)",
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 5,
+                } : { paddingHorizontal: 14, paddingVertical: 5 }}>
                   <Users
                     color={color}
-                    size={22}
+                    size={20}
                     fill={focused ? color : "transparent"}
                   />
                 </View>
@@ -92,13 +114,14 @@ function LayoutContent() {
               title: "Profile",
               tabBarIcon: ({ color, focused }) => (
                 <View style={focused ? {
-                  backgroundColor: "rgba(124, 58, 237, 0.15)",
-                  borderRadius: 12,
-                  padding: 6,
-                } : { padding: 6 }}>
+                  backgroundColor: "rgba(124, 58, 237, 0.18)",
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 5,
+                } : { paddingHorizontal: 14, paddingVertical: 5 }}>
                   <User
                     color={color}
-                    size={22}
+                    size={20}
                     fill={focused ? color : "transparent"}
                   />
                 </View>

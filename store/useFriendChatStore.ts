@@ -14,9 +14,9 @@ interface FriendChatStore {
   startFriendChat: (socket: any, friendId: string, onStarted: () => void) => void;
   emitTyping: (socket: any) => void;
   emitStopTyping: (socket: any) => void;
-  emitMessageSeen: (socket: any, timestamp: number) => void;
+  emitMessageSeen: (socket: any, timestamp: number, messageId?: string) => void;
   fetchChatHistory: (friendId: string) => Promise<any[]>;
-  sendMessage: (friendId: string, message: string) => Promise<void>;
+  sendMessage: (friendId: string, message: string) => Promise<{ messageId: string; timestamp: number } | null>;
   reset: () => void;
   initializeListeners: (socket: any) => () => void;
 }
@@ -68,11 +68,11 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
       socket.emit('stop_typing', { toUserId: partnerId, fromUserId: userId });
     }
   },
-  emitMessageSeen: (socket, timestamp) => {
+  emitMessageSeen: (socket, timestamp, messageId?) => {
     const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
     if (socket?.connected && partnerId && userId) {
-      socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp });
+      socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp, messageId });
     }
   },
   fetchChatHistory: async (friendId) => {
@@ -96,10 +96,22 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
     const userId = useUserStore.getState().user?._id;
     if (!userId || !friendId || !message.trim()) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid input or user.' });
-      return;
+      return null;
     }
     try {
-      await api.post('/api/chats/send', { userId, friendId, message });
+      const response = await api.post('/api/chats/send', { userId, friendId, message });
+      const data = response.data;
+      const msg = data.message || data;
+      const msgId = msg?._id || msg?.messageId || msg?.id;
+      const msgTimestamp = msg?.timestamp
+        ? new Date(msg.timestamp).getTime()
+        : msg?.createdAt
+        ? new Date(msg.createdAt).getTime()
+        : null;
+      if (msgId) {
+        return { messageId: msgId, timestamp: msgTimestamp || Date.now() };
+      }
+      return null;
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to send message.' });
       throw error;

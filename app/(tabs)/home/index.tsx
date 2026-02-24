@@ -245,29 +245,27 @@ const Home = () => {
       </View>
 
       {/* Bottom Features */}
-      <View className="px-6 pb-4">
-        <View className="flex-row justify-around" style={{
-          backgroundColor: 'rgba(124, 58, 237, 0.06)',
-          borderRadius: 16,
-          paddingVertical: 16,
-          paddingHorizontal: 8,
-          borderWidth: 1,
-          borderColor: 'rgba(124, 58, 237, 0.1)',
-        }}>
-          <View className="items-center flex-1">
-            <Shield size={18} color="#7C3AED" />
-            <Text style={{ color: '#8888AA', fontSize: 11, marginTop: 6, fontWeight: '500' }}>Anonymous</Text>
-          </View>
-          <View style={{ width: 1, backgroundColor: 'rgba(124, 58, 237, 0.15)' }} />
-          <View className="items-center flex-1">
-            <Zap size={18} color="#7C3AED" />
-            <Text style={{ color: '#8888AA', fontSize: 11, marginTop: 6, fontWeight: '500' }}>Instant Match</Text>
-          </View>
-          <View style={{ width: 1, backgroundColor: 'rgba(124, 58, 237, 0.15)' }} />
-          <View className="items-center flex-1">
-            <MessageCircle size={18} color="#7C3AED" />
-            <Text style={{ color: '#8888AA', fontSize: 11, marginTop: 6, fontWeight: '500' }}>Real-time</Text>
-          </View>
+      <View style={{
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 16,
+        paddingBottom: 12,
+        paddingHorizontal: 24,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <Shield size={12} color="#4A4A72" />
+          <Text style={{ color: '#4A4A72', fontSize: 11, fontWeight: '500' }}>Anonymous</Text>
+        </View>
+        <View style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: '#2A2A4A' }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <Zap size={12} color="#4A4A72" />
+          <Text style={{ color: '#4A4A72', fontSize: 11, fontWeight: '500' }}>Instant Match</Text>
+        </View>
+        <View style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: '#2A2A4A' }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <MessageCircle size={12} color="#4A4A72" />
+          <Text style={{ color: '#4A4A72', fontSize: 11, fontWeight: '500' }}>Real-time</Text>
         </View>
       </View>
     </View>

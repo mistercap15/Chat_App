@@ -13,6 +13,7 @@ import api from '@/utils/api';
 
 interface Message {
   messageId?: string;
+  backendMessageId?: string;
   text: string;
   sender: 'user' | 'friend';
   timestamp: number;
@@ -73,7 +74,7 @@ const FriendChat = () => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
-  const isSending = useRef(false);
+  const lastSentRef = useRef<{ text: string; time: number } | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const isChatInitialized = useRef(false);
@@ -101,7 +102,7 @@ const FriendChat = () => {
   } = useFriendChatStore();
 
   const TYPING_TIMEOUT = 3000;
-  const DEDUPE_WINDOW = 5000;
+  const DEDUPE_WINDOW = 2000;
 
   useEffect(() => {
     isMounted.current = true;
@@ -137,16 +138,10 @@ const FriendChat = () => {
         setMessages([]);
         const fetchedMessages = await fetchChatHistory(friendId);
         setMessages((prev) => {
-          const existingIds = new Set(prev.map((msg) => msg.messageId).filter(Boolean));
-          const newMessages = fetchedMessages.filter((msg) => {
-            if (msg.messageId && existingIds.has(msg.messageId)) return false;
-            return !prev.some(
-              (existing) =>
-                existing.text === msg.text &&
-                existing.sender === msg.sender &&
-                Math.abs(existing.timestamp - msg.timestamp) < DEDUPE_WINDOW
-            );
-          });
+          const existingIds = new Set(prev.map((msg) => msg.backendMessageId || msg.messageId).filter(Boolean));
+          const newMessages = fetchedMessages
+            .filter((msg) => !existingIds.has(msg.messageId))
+            .map((msg) => ({ ...msg, backendMessageId: msg.messageId }));
           return [...prev, ...newMessages];
         });
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -192,38 +187,53 @@ const FriendChat = () => {
       if (!isMounted.current || fromUserId === user?._id) return;
       if (fromUserId === partnerId) {
         setMessages((prev): any => {
-          // Dedup by messageId if available
-          if (messageId && prev.some((msg) => msg.messageId === messageId)) {
-            return prev;
-          }
-          // Dedup by same text + sender within time window
-          const isDuplicate = prev.some(
-            (msg) =>
-              msg.text === message &&
-              msg.sender === 'friend' &&
-              Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW
-          );
+          const existingIds = new Set(prev.map((msg) => msg.backendMessageId || msg.messageId).filter(Boolean));
+          const isDuplicate =
+            (messageId && existingIds.has(messageId)) ||
+            prev.some(
+              (msg) =>
+                msg.text === message &&
+                msg.sender === 'friend' &&
+                Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW
+            );
           if (isDuplicate) return prev;
-          const newMessage = { messageId, text: message, sender: 'friend', timestamp, seen: false };
+          const newMessage: Message = { messageId, backendMessageId: messageId, text: message, sender: 'friend', timestamp, seen: false };
           flatListRef.current?.scrollToEnd({ animated: true });
           return [...prev, newMessage];
         });
-        emitMessageSeen(socket, timestamp);
+        emitMessageSeen(socket, timestamp, messageId);
       }
     };
 
-    const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
+    const messageSeenListener = ({ fromUserId, timestamp, messageId }: { fromUserId: string; timestamp: number; messageId?: string }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
-      // Mark all unseen user messages up to the seen timestamp as read.
-      // Uses tolerance (+2s) to account for client vs server clock differences.
-      setMessages((prev) =>
-        prev.map((msg) => {
-          if (msg.sender === 'user' && !msg.seen && msg.timestamp <= timestamp + 2000) {
+      setMessages((prev) => {
+        // 1) Try matching by backendMessageId (most reliable — backend's _id)
+        if (messageId) {
+          const updated = prev.map((msg) =>
+            msg.sender === 'user' && !msg.seen && msg.backendMessageId === messageId
+              ? { ...msg, seen: true }
+              : msg
+          );
+          if (updated.some((msg, i) => msg !== prev[i])) return updated;
+        }
+        // 2) Try exact client timestamp match (works for random-chat style flows)
+        const byTimestamp = prev.map((msg) =>
+          msg.sender === 'user' && !msg.seen && msg.timestamp === timestamp
+            ? { ...msg, seen: true }
+            : msg
+        );
+        if (byTimestamp.some((msg, i) => msg !== prev[i])) return byTimestamp;
+        // 3) Fallback: mark the oldest unseen user message (handles server-time drift)
+        let marked = false;
+        return prev.map((msg) => {
+          if (!marked && msg.sender === 'user' && !msg.seen) {
+            marked = true;
             return { ...msg, seen: true };
           }
           return msg;
-        })
-      );
+        });
+      });
     };
 
     socket.on('receive_message', messageListener);
@@ -246,28 +256,40 @@ const FriendChat = () => {
     router.replace('/(tabs)/friends');
   };
 
-  const handleSendMessage = () => {
-    const messageText = input.trim();
-    if (!messageText || !user?._id || !partnerId || connectionStatus === 'disconnected') return;
-    // Brief guard to prevent double-tap (reset immediately after state updates)
-    if (isSending.current) return;
-    isSending.current = true;
+  const handleSendMessage = async () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
 
-    const timestamp = Date.now();
-    const messageId = `${user._id}-${timestamp}`;
-    const newMessage = { messageId, text: messageText, sender: 'user', timestamp, seen: false };
-    setMessages((prev): any => [...prev, newMessage]);
+    // Prevent double-tap sending the exact same message within 500ms
+    const now = Date.now();
+    if (lastSentRef.current && lastSentRef.current.text === trimmed && now - lastSentRef.current.time < 500) return;
+    lastSentRef.current = { text: trimmed, time: now };
+
+    const timestamp = now;
+    const clientMessageId = `${user?._id}-${timestamp}`;
+    const newMessage: Message = { messageId: clientMessageId, text: trimmed, sender: 'user', timestamp, seen: false };
+    setMessages((prev) => [...prev, newMessage]);
     setInput('');
     flatListRef.current?.scrollToEnd({ animated: true });
 
-    // Release send lock after state updates so next message can be sent immediately
-    setTimeout(() => { isSending.current = false; }, 100);
-
-    // Fire-and-forget: HTTP saves to DB and emits receive_message to the socket room.
-    sendMessage(friendId, messageText).catch(() => {
-      setMessages((prev) => prev.filter((msg) => msg.messageId !== messageId));
+    try {
+      // HTTP sendMessage saves to DB and emits receive_message to the socket room.
+      // Do NOT also emit send_message via socket — that causes double delivery.
+      const result = await sendMessage(friendId, trimmed);
+      // Update local message with backend's _id so message_seen can match it
+      if (result?.messageId) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.messageId === clientMessageId
+              ? { ...msg, backendMessageId: result.messageId, timestamp: result.timestamp || msg.timestamp }
+              : msg
+          )
+        );
+      }
+    } catch (error: any) {
+      setMessages((prev) => prev.filter((msg) => msg.messageId !== clientMessageId));
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to send message.' });
-    });
+    }
   };
 
   const handleTyping = useCallback(() => {
