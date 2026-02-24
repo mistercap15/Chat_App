@@ -7,6 +7,7 @@ import { View } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import Toast from "react-native-toast-message";
 import { BlurView } from "expo-blur";
+import usePushNotifications from "@/hooks/usePushNotifications";
 
 export default function Layout() {
   return (
@@ -18,6 +19,7 @@ export default function Layout() {
 
 function LayoutContent() {
   const { isDarkMode } = useTheme();
+  usePushNotifications();
 
   useEffect(() => {
     SystemUI.setBackgroundColorAsync("#0F0F2D");

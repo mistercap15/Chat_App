@@ -8,6 +8,7 @@ import useAuthStore from '@/store/useAuthStore';
 import useSocketStore from '@/store/useSocketStore';
 import api from '@/utils/api';
 import Toast from 'react-native-toast-message';
+import { removePushTokenFromBackend } from '@/utils/notifications';
 
 const Settings = () => {
   const router = useRouter();
@@ -39,6 +40,7 @@ const Settings = () => {
     if (!user?._id || isDeleting) return;
     setIsDeleting(true);
     try {
+      await removePushTokenFromBackend();
       await api.delete('/api/users/account');
       clearUser();
       clearToken();
