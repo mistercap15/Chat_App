@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { Socket } from 'socket.io-client';
 import api from '@/utils/api';
 import Toast from 'react-native-toast-message';
 import useUserStore from './useUserStore';
+import { AppSocket } from '@/types/socket';
 
 interface FriendChatStore {
   partnerId: string | null;
@@ -11,14 +11,14 @@ interface FriendChatStore {
   chatType: 'friend' | null;
   setPartner: (partnerId: string | null, partnerName: string | null) => void;
   setPartnerTyping: (isTyping: boolean) => void;
-  startFriendChat: (socket: any, friendId: string, onStarted: () => void) => void;
-  emitTyping: (socket: any) => void;
-  emitStopTyping: (socket: any) => void;
-  emitMessageSeen: (socket: any, timestamp: number, messageId?: string) => void;
+  startFriendChat: (socket: AppSocket | null, friendId: string, onStarted: () => void) => void;
+  emitTyping: (socket: AppSocket | null) => void;
+  emitStopTyping: (socket: AppSocket | null) => void;
+  emitMessageSeen: (socket: AppSocket | null, timestamp: number, messageId?: string) => void;
   fetchChatHistory: (friendId: string) => Promise<any[]>;
   sendMessage: (friendId: string, message: string) => Promise<{ messageId: string; timestamp: number } | null>;
   reset: () => void;
-  initializeListeners: (socket: any) => () => void;
+  initializeListeners: (socket: AppSocket | null) => () => void;
 }
 
 const useFriendChatStore = create<FriendChatStore>((set, get) => ({
@@ -121,6 +121,7 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
     set({ partnerId: null, partnerName: null, isPartnerTyping: false, chatType: null });
   },
   initializeListeners: (socket) => {
+    if (!socket) return () => {};
     const handlePartnerTyping = ({ fromUserId }: { fromUserId: string }) => {
       if (fromUserId === get().partnerId) {
         set({ isPartnerTyping: true });

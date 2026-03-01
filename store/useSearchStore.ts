@@ -1,13 +1,13 @@
 // src/store/useSearchStore.ts
 import { create } from 'zustand';
 import Toast from 'react-native-toast-message';
-import { Socket } from 'socket.io-client';
 import useUserStore from './useUserStore';
+import { AppSocket } from '@/types/socket';
 
 interface SearchStore {
   isSearching: boolean;
-  startSearching: (socket: any, onMatched: (partnerId: string, partnerName: string) => void) => void;
-  stopSearching: (socket: any) => void;
+  startSearching: (socket: AppSocket | null, onMatched: (partnerId: string, partnerName: string) => void) => void;
+  stopSearching: (socket: AppSocket | null) => void;
 }
 
 const useSearchStore = create<SearchStore>((set, get) => ({

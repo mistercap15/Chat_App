@@ -200,7 +200,7 @@ const Chat = () => {
   useEffect(() => {
     isMounted.current = true;
     isInitialMount.current = true;
-    const cleanup = initializeListeners(socket);
+    const cleanup = socket ? initializeListeners(socket) : () => {};
 
     const chatReadyListener = () => {
       isChatInitialized.current = true;
@@ -213,7 +213,7 @@ const Chat = () => {
       isMounted.current = false;
       isInitialMount.current = false;
       cleanup();
-      socket?.offAnyOutgoing();
+      socket?.offAnyOutgoing?.();
       socket?.off("chat_ready", chatReadyListener);
     };
   }, [socket, initializeListeners]);
