@@ -21,7 +21,6 @@ Notifications.setNotificationHandler({
  */
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
   if (!Device.isDevice) {
-    console.log('Push notifications require a physical device');
     return null;
   }
 
@@ -36,7 +35,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   if (finalStatus !== 'granted') {
-    console.log('Push notification permission not granted');
     return null;
   }
 
@@ -93,9 +91,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 export async function savePushTokenToBackend(expoPushToken: string): Promise<void> {
   try {
     await api.put('/api/users/push-token', { token: expoPushToken });
-    console.log('Push token saved to backend');
-  } catch (error) {
-    console.error('Failed to save push token to backend:', error);
+  } catch {
+    // Non-critical: push token save failure is silent
   }
 }
 
@@ -106,8 +103,7 @@ export async function savePushTokenToBackend(expoPushToken: string): Promise<voi
 export async function removePushTokenFromBackend(): Promise<void> {
   try {
     await api.put('/api/users/push-token', { token: null });
-    console.log('Push token removed from backend');
-  } catch (error) {
-    console.error('Failed to remove push token from backend:', error);
+  } catch {
+    // Non-critical: push token removal failure is silent
   }
 }

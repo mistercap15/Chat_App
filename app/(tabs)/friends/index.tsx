@@ -95,7 +95,6 @@ const Friends = () => {
     try {
       await api.delete(`/api/users/friends/${friendId}`);
       setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
-      socket?.emit('friend_removed', { userId: user._id, removedUserId: friendId });
       Toast.show({ type: 'success', text1: 'Friend Removed', text2: 'The friend has been removed.' });
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to remove friend.' });

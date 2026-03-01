@@ -9,6 +9,7 @@ interface User {
   bio?: string;
   interests?: string[];
   friends?: string[];
+  profilePicture?: string;
 }
 
 interface UserStore {

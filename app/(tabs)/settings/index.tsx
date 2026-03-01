@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Image } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Edit3, Trash2, Bell, Lock, Globe, ChevronRight } from 'lucide-react-native';
+import { Edit3, Trash2, Bell, Lock, Globe, ChevronRight, Camera } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import useUserStore from '@/store/useUserStore';
 import useAuthStore from '@/store/useAuthStore';
 import useSocketStore from '@/store/useSocketStore';
@@ -13,12 +14,13 @@ import { removePushTokenFromBackend } from '@/utils/notifications';
 
 const Settings = () => {
   const router = useRouter();
-  const { user, clearUser }: any = useUserStore();
+  const { user, clearUser, setUser }: any = useUserStore();
   const { clearToken } = useAuthStore();
   const { socket, disconnectSocket } = useSocketStore();
   const { clearAll: clearUnreadCounts } = useUnreadStore();
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   useEffect(() => {
     if (!socket) return;
@@ -57,6 +59,48 @@ const Settings = () => {
       setIsDeleting(false);
       setDeleteModalVisible(false);
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to delete account.' });
+    }
+  };
+
+  const handlePickProfilePicture = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Toast.show({ type: 'info', text1: 'Permission Required', text2: 'Allow photo library access to change your picture.' });
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    setIsUploadingPhoto(true);
+    try {
+      const asset = result.assets[0];
+      const formData = new FormData();
+      formData.append('picture', {
+        uri: asset.uri,
+        name: 'profile.jpg',
+        type: 'image/jpeg',
+      } as any);
+
+      const response = await api.post('/api/users/profile/picture', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const newPictureUrl = response.data.profilePicture || response.data.url;
+      if (newPictureUrl && user) {
+        setUser({ ...user, profilePicture: newPictureUrl });
+      }
+      Toast.show({ type: 'success', text1: 'Photo Updated', text2: 'Your profile picture has been saved.' });
+    } catch (error: any) {
+      Toast.show({ type: 'error', text1: 'Upload Failed', text2: error.response?.data?.message || 'Could not upload photo.' });
+    } finally {
+      setIsUploadingPhoto(false);
     }
   };
 
@@ -115,17 +159,52 @@ const Settings = () => {
           borderWidth: 1,
           borderColor: 'rgba(124, 58, 237, 0.1)',
         }}>
-          <View style={{
-            width: 80,
-            height: 80,
-            borderRadius: 40,
-            backgroundColor: '#7C3AED',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: 14,
-          }}>
-            <Text style={{ color: 'white', fontSize: 32, fontWeight: '700' }}>{getInitial()}</Text>
-          </View>
+          {/* Avatar with camera button */}
+          <TouchableOpacity
+            onPress={handlePickProfilePicture}
+            disabled={isUploadingPhoto}
+            activeOpacity={0.8}
+            style={{ position: 'relative', marginBottom: 14 }}
+          >
+            {user?.profilePicture ? (
+              <Image
+                source={{ uri: user.profilePicture }}
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 40,
+                }}
+              />
+            ) : (
+              <View style={{
+                width: 80,
+                height: 80,
+                borderRadius: 40,
+                backgroundColor: '#7C3AED',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Text style={{ color: 'white', fontSize: 32, fontWeight: '700' }}>{getInitial()}</Text>
+              </View>
+            )}
+            <View style={{
+              position: 'absolute',
+              bottom: 0,
+              right: 0,
+              width: 26,
+              height: 26,
+              borderRadius: 13,
+              backgroundColor: '#7C3AED',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 2,
+              borderColor: '#161638',
+              opacity: isUploadingPhoto ? 0.5 : 1,
+            }}>
+              <Camera size={13} color="white" />
+            </View>
+          </TouchableOpacity>
+
           <Text style={{ color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
             {user?.user_name || 'Anonymous'}
           </Text>
@@ -151,6 +230,39 @@ const Settings = () => {
             {user?.bio || 'No bio set. Tap Edit to add one!'}
           </Text>
         </View>
+
+        {/* Interests Section */}
+        {user?.interests && user.interests.length > 0 && (
+          <View style={{
+            backgroundColor: '#161638',
+            borderRadius: 16,
+            padding: 16,
+            marginBottom: 20,
+            borderWidth: 1,
+            borderColor: 'rgba(124, 58, 237, 0.08)',
+          }}>
+            <Text style={{ color: '#A78BFA', fontSize: 11, fontWeight: '600', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Interests
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {user.interests.map((interest: string) => (
+                <View
+                  key={interest}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: 'rgba(124, 58, 237, 0.12)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(124, 58, 237, 0.2)',
+                  }}
+                >
+                  <Text style={{ color: '#A78BFA', fontSize: 12, fontWeight: '500' }}>{interest}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Settings Options */}
         <Text style={{ color: '#64648F', fontSize: 11, fontWeight: '600', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5, paddingLeft: 4 }}>

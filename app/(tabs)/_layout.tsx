@@ -2,19 +2,26 @@ import { Tabs } from "expo-router";
 import { MessageCircle, Users, User } from "lucide-react-native";
 import { ThemeProvider, useTheme } from "@/context/ThemeContext";
 import ThemedLayout from "@/components/ThemedLayout";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEffect } from "react";
 import { View, Text } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import Toast from "react-native-toast-message";
 import { BlurView } from "expo-blur";
+import { router } from "expo-router";
 import usePushNotifications from "@/hooks/usePushNotifications";
 import useUnreadStore from "@/store/useUnreadStore";
 import useFriendRequestStore from "@/store/useFriendRequestStore";
+import useAuthStore from "@/store/useAuthStore";
+import useUserStore from "@/store/useUserStore";
+import api from "@/utils/api";
 
 export default function Layout() {
   return (
     <ThemeProvider>
-      <LayoutContent />
+      <ErrorBoundary>
+        <LayoutContent />
+      </ErrorBoundary>
     </ThemeProvider>
   );
 }
@@ -31,6 +38,25 @@ function LayoutContent() {
   useEffect(() => {
     SystemUI.setBackgroundColorAsync("#0F0F2D");
   }, [isDarkMode]);
+
+  // On startup, refresh the auth token. On failure, redirect to register.
+  useEffect(() => {
+    const refreshOnStartup = async () => {
+      const token = useAuthStore.getState().token;
+      if (!token) return;
+      try {
+        const response = await api.post('/api/auth/token/refresh');
+        if (response.data.token) {
+          useAuthStore.getState().setToken(response.data.token);
+        }
+      } catch {
+        useAuthStore.getState().clearToken();
+        useUserStore.getState().clearUser();
+        router.replace('/(tabs)/settings/register');
+      }
+    };
+    refreshOnStartup();
+  }, []);
 
   return (
     <>

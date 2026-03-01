@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { Socket } from 'socket.io-client';
 import useUserStore from './useUserStore';
 import Toast from 'react-native-toast-message';
 
@@ -37,32 +36,28 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
   },
   setPartnerTyping: (isTyping) => set({ isPartnerTyping: isTyping }),
   emitTyping: (socket) => {
-    const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
-    if (socket?.connected && partnerId && userId) {
-      socket.emit('typing', { toUserId: partnerId, fromUserId: userId });
+    if (socket?.connected && partnerId) {
+      socket.emit('typing', { toUserId: partnerId });
     }
   },
   emitStopTyping: (socket) => {
-    const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
-    if (socket?.connected && partnerId && userId) {
-      socket.emit('stop_typing', { toUserId: partnerId, fromUserId: userId });
+    if (socket?.connected && partnerId) {
+      socket.emit('stop_typing', { toUserId: partnerId });
     }
   },
   emitMessageSeen: (socket, timestamp) => {
-    const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
-    if (socket?.connected && partnerId && userId) {
-      socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp });
+    if (socket?.connected && partnerId) {
+      socket.emit('message_seen', { toUserId: partnerId, timestamp });
     }
   },
   emitFriendRequestSent: (socket) => {
-    const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
     const username = useUserStore.getState().user?.user_name || 'Anonymous';
-    if (socket?.connected && userId && partnerId) {
-      socket.emit('friend_request_sent', { toUserId: partnerId, fromUserId: userId, fromUsername: username });
+    if (socket?.connected && partnerId) {
+      socket.emit('friend_request_sent', { toUserId: partnerId, fromUsername: username });
     }
   },
   clearFriendRequestSent: () => set({ friendRequestSent: null }),

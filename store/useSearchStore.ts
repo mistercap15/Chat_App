@@ -1,20 +1,18 @@
 // src/store/useSearchStore.ts
 import { create } from 'zustand';
 import Toast from 'react-native-toast-message';
-import { Socket } from 'socket.io-client';
 import useUserStore from './useUserStore';
 
 interface SearchStore {
   isSearching: boolean;
-  startSearching: (socket: any, onMatched: (partnerId: string, partnerName: string) => void) => void;
+  startSearching: (socket: any, onMatched: (partnerId: string, partnerName: string) => void, onNoMatch?: () => void) => void;
   stopSearching: (socket: any) => void;
 }
 
 const useSearchStore = create<SearchStore>((set, get) => ({
   isSearching: false,
-  startSearching: (socket, onMatched) => {
+  startSearching: (socket, onMatched, onNoMatch) => {
     const userId = useUserStore.getState().user?._id;
-    const username = useUserStore.getState().user?.user_name || 'Anonymous';
     if (!userId || !socket?.connected) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Not connected to server.' });
       return;
@@ -22,11 +20,13 @@ const useSearchStore = create<SearchStore>((set, get) => ({
     if (get().isSearching) return;
     set({ isSearching: true });
 
-    // Remove any stale listener before adding a new one to prevent accumulation
+    // Remove any stale listeners before adding new ones
     socket.off('match_found');
+    socket.off('no_match_found');
 
     const handleMatchFound = ({ partnerId, partnerName }: any) => {
       socket.off('match_found', handleMatchFound);
+      socket.off('no_match_found', handleNoMatchFound);
       if (!/^[0-9a-fA-F]{24}$/.test(partnerId)) {
         set({ isSearching: false });
         Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid partner ID.' });
@@ -36,15 +36,24 @@ const useSearchStore = create<SearchStore>((set, get) => ({
       onMatched(partnerId, partnerName);
     };
 
+    const handleNoMatchFound = () => {
+      socket.off('match_found', handleMatchFound);
+      socket.off('no_match_found', handleNoMatchFound);
+      set({ isSearching: false });
+      onNoMatch?.();
+    };
+
     socket.on('match_found', handleMatchFound);
-    socket.emit('start_search', { userId, username });
+    socket.on('no_match_found', handleNoMatchFound);
+    // Backend uses socket.userId from JWT — no payload needed
+    socket.emit('start_search');
   },
   stopSearching: (socket) => {
-    const userId = useUserStore.getState().user?._id;
-    if (get().isSearching && socket?.connected && userId) {
-      socket.emit('stop_search', { userId });
+    if (get().isSearching && socket?.connected) {
+      socket.emit('stop_search');
     }
     socket?.off('match_found');
+    socket?.off('no_match_found');
     set({ isSearching: false });
   },
 }));

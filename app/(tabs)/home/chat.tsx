@@ -15,7 +15,7 @@ import {
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import moment from "moment";
 import { Ionicons } from "@expo/vector-icons";
-import { UserPlus, LogOut, Shuffle, X, Check, Send, ChevronLeft, MoreVertical, ChevronDown, ChevronUp } from "lucide-react-native";
+import { UserPlus, LogOut, Shuffle, X, Check, Send, ChevronLeft, MoreVertical } from "lucide-react-native";
 import { router } from "expo-router";
 import Toast from "react-native-toast-message";
 import useSocketStore from "@/store/useSocketStore";
@@ -147,10 +147,6 @@ const Chat = () => {
   const DISCONNECT_GRACE_PERIOD = 60000;
   const DEDUPE_WINDOW = 1000;
 
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Chat: ${message}`, data || "");
-  };
-
   const navigateToFriends = useCallback(
     (skipModal = false) => {
       if (!isMounted.current) return;
@@ -202,6 +198,7 @@ const Chat = () => {
     isInitialMount.current = true;
     const cleanup = initializeListeners(socket);
 
+    // Listen for chat_ready as a confirmation but don't gate messages on it
     const chatReadyListener = () => {
       isChatInitialized.current = true;
       isInitialMount.current = false;
@@ -233,9 +230,11 @@ const Chat = () => {
         return;
       }
 
-      // Room joining is handled server-side by the match logic.
-      // No need to emit join_room — the backend has no handler for it.
+      // Mark chat as initialized immediately when component mounts with a valid partnerId.
+      // chat_ready confirmation from server also sets this, but we don't gate on it
+      // to avoid the race condition where chat_ready arrives before the component mounts.
       hasJoinedRoom.current = true;
+      isChatInitialized.current = true;
 
       return () => {
         if (isIntentionallyLeaving.current && !leaveConfirmVisible && socket?.connected && partnerId && !chatEnded) {
@@ -265,8 +264,8 @@ const Chat = () => {
             return prev;
           }
           const newMessage = { text: message, sender: "partner", timestamp, seen: false };
-          flatListRef.current?.scrollToEnd({ animated: true });
-          return [...prev, newMessage];
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          return [newMessage, ...prev];
         });
         emitMessageSeen(socket, timestamp);
       }
@@ -279,10 +278,10 @@ const Chat = () => {
       setLastDisconnectTime(now);
       setChatEnded(true);
       setMessages((prev) => [
-        ...prev,
         { text: "Partner has left the chat", sender: "system", timestamp: Date.now(), type: "system" },
+        ...prev,
       ]);
-      flatListRef.current?.scrollToEnd({ animated: true });
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
     };
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
@@ -315,16 +314,16 @@ const Chat = () => {
       setMessages((prev) => {
         if (prev.some((msg) => msg.type === "friendRequestReceived" && msg.sender === "partner")) return prev;
         return [
-          ...prev,
           {
             text: `${friendRequest.fromUsername} wants to be friends!`,
             sender: "partner",
             timestamp: Date.now(),
             type: "friendRequestReceived",
           },
+          ...prev,
         ];
       });
-      flatListRef.current?.scrollToEnd({ animated: true });
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
     }
   }, [friendRequest, chatEnded]);
 
@@ -366,13 +365,14 @@ const Chat = () => {
       return;
     }
     const timestamp = Date.now();
+    const clientMessageId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const newMessage = { text: input, sender: "user", timestamp, seen: false };
-    setMessages((prev): any => [...prev, newMessage]);
+    setMessages((prev): any => [newMessage, ...prev]);
     setInput("");
-    flatListRef.current?.scrollToEnd({ animated: true });
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
 
     try {
-      socket.emit("send_message", { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
+      socket.emit("send_message", { toUserId: partnerId, message: input, timestamp, clientMessageId });
     } catch (error: any) {
       setMessages((prev) => prev.filter((msg) => msg.timestamp !== timestamp));
       Toast.show({ type: "error", text1: "Error", text2: "Failed to send message." });
@@ -386,15 +386,16 @@ const Chat = () => {
     await sendFriendRequest(partnerId);
     emitFriendRequestSent(socket);
     setMessages((prev) => [
-      ...prev,
       { text: "Friend request sent!", sender: "user", timestamp: Date.now(), seen: false, type: "friendRequestSent" },
+      ...prev,
     ]);
     setShowExtraButtons(false);
   };
 
-  const handleAcceptFriendRequest = async (timestamp: number) => {
+  const handleAcceptFriendRequest = async (_timestamp: number) => {
     if (!user?._id || !partnerId) return;
     await acceptFriendRequest(partnerId);
+    socket?.emit("friend_request_accepted", { friendId: partnerId });
     navigateToFriends(true);
   };
 
@@ -407,7 +408,7 @@ const Chat = () => {
       );
       clearFriendRequest();
       clearFriendRequestSent();
-      socket?.emit("friend_request_rejected", { fromUserId: partnerId, toUserId: user._id });
+      socket?.emit("friend_request_rejected", { friendId: partnerId });
       Toast.show({ type: "success", text1: "Rejected", text2: "Friend request rejected." });
     } catch (error: any) {
       Toast.show({ type: "error", text1: "Error", text2: "Failed to reject friend request." });
@@ -422,11 +423,11 @@ const Chat = () => {
     }
     setChatEnded(true);
     setMessages((prev) => [
-      ...prev,
       { text: "You left the chat", sender: "system", timestamp: Date.now(), type: "system" },
+      ...prev,
     ]);
     setLeaveConfirmVisible(false);
-    flatListRef.current?.scrollToEnd({ animated: true });
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
     navigateToHome(true);
   }, [socket, partnerId, navigateToHome]);
 
@@ -456,9 +457,10 @@ const Chat = () => {
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isUser = item.sender === "user";
     const isSystem = item.sender === "system";
+    // With inverted list, index 0 = newest (shown at bottom), index+1 = older message
     const showTimestamp = index === messages.length - 1 ||
       messages[index + 1]?.sender !== item.sender ||
-      (messages[index + 1]?.timestamp - item.timestamp > 60000);
+      (item.timestamp - (messages[index + 1]?.timestamp ?? item.timestamp) > 60000);
 
     if (isSystem || item.type === "friendRequestSent") {
       return (
@@ -576,7 +578,11 @@ const Chat = () => {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior="padding"
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
       <View style={{ flex: 1, backgroundColor: '#0F0F2D' }}>
         {/* Header */}
         <View style={{
@@ -701,7 +707,7 @@ const Chat = () => {
           </View>
         )}
 
-        {/* Messages */}
+        {/* Messages — inverted so newest appear at bottom */}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -709,7 +715,7 @@ const Chat = () => {
           renderItem={renderMessage}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 8, paddingHorizontal: 12 }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          inverted
           ListEmptyComponent={
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
               <Ionicons name="chatbubbles-outline" size={48} color="#2A2A5A" />
