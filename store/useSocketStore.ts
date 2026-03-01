@@ -1,6 +1,6 @@
 // src/store/useSocketStore.ts
 import { create } from 'zustand';
-import io, { Socket } from 'socket.io-client';
+import io from 'socket.io-client';
 import { AppState, AppStateStatus } from 'react-native';
 import { BASE_URL } from '@/utils/constants';
 import Toast from 'react-native-toast-message';
@@ -8,9 +8,10 @@ import useUserStore from './useUserStore';
 import useAuthStore from './useAuthStore';
 import useFriendRequestStore from './useFriendRequestStore';
 import useUnreadStore from './useUnreadStore';
+import { AppSocket } from '@/types/socket';
 
 interface SocketStore {
-  socket: any | null;
+  socket: AppSocket | null;
   connectionStatus: 'disconnected' | 'connecting' | 'connected';
   isConnecting: boolean;
   connectSocket: (userId: string) => void;
@@ -48,22 +49,22 @@ const useSocketStore = create<SocketStore>((set, get) => {
       reconnectionDelay: 500,
       reconnectionDelayMax: 2000,
       timeout: 20000,
-    });
+    }) as unknown as AppSocket;
 
     // Global listeners that must work on every screen
-    newSocket.on('friend_request_received', ({ fromUserId, fromUsername }: any) => {
+    newSocket.on('friend_request_received', ({ fromUserId, fromUsername }: { fromUserId: string; fromUsername: string }) => {
       log('Global: friend_request_received', { fromUserId, fromUsername });
       useFriendRequestStore.getState().fetchPendingRequests(userId);
       Toast.show({ type: 'info', text1: 'Friend Request', text2: `${fromUsername || 'Someone'} wants to be your friend!` });
     });
 
-    newSocket.on('friend_added', ({ friendId, friendUsername }: any) => {
+    newSocket.on('friend_added', ({ friendId, friendUsername }: { friendId: string; friendUsername: string }) => {
       log('Global: friend_added', { friendId, friendUsername });
     });
 
     // Track unread message counts globally — only for friend chat messages
     // received when the user is NOT actively viewing that friend's chat.
-    newSocket.on('receive_message', ({ fromUserId }: any) => {
+    newSocket.on('receive_message', ({ fromUserId }: { fromUserId: string }) => {
       if (fromUserId && fromUserId !== userId) {
         useUnreadStore.getState().incrementUnread(fromUserId);
       }
@@ -76,12 +77,12 @@ const useSocketStore = create<SocketStore>((set, get) => {
       useFriendRequestStore.getState().fetchPendingRequests(userId);
     });
 
-    newSocket.on('connect_error', (err: any) => {
+    newSocket.on('connect_error', (err: { message: string }) => {
       log('Socket connect_error', { userId, error: err.message });
       set({ connectionStatus: 'disconnected', isConnecting: false });
     });
 
-    newSocket.on('reconnect', (attempt:any) => {
+    newSocket.on('reconnect', (attempt: number) => {
       log('Socket reconnected', { userId, attempt });
       set({ connectionStatus: 'connected', isConnecting: false });
       newSocket.emit('set_username', { userId, username: user?.user_name || 'Anonymous' });
@@ -94,7 +95,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       Toast.show({ type: 'error', text1: 'Connection Lost', text2: 'Failed to reconnect.' });
     });
 
-    newSocket.on('error', ({ message }:any) => {
+    newSocket.on('error', ({ message }: { message: string }) => {
       log('Socket error', { message });
       Toast.show({ type: 'error', text1: 'Error', text2: message });
     });

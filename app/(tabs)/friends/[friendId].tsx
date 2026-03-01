@@ -107,7 +107,7 @@ const FriendChat = () => {
 
   useEffect(() => {
     isMounted.current = true;
-    const cleanup = initializeListeners(socket);
+    const cleanup = socket ? initializeListeners(socket) : () => {};
     return () => {
       isMounted.current = false;
       cleanup();

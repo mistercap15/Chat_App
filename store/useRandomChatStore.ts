@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { Socket } from 'socket.io-client';
 import useUserStore from './useUserStore';
+import { AppSocket } from '@/types/socket';
 import Toast from 'react-native-toast-message';
 
 interface RandomChatStore {
@@ -13,15 +13,15 @@ interface RandomChatStore {
   friendRequestAccepted: boolean;
   setPartner: (partnerId: string | null, partnerName: string | null) => void;
   setPartnerTyping: (isTyping: boolean) => void;
-  emitTyping: (socket: any) => void;
-  emitStopTyping: (socket: any) => void;
-  emitMessageSeen: (socket: any, timestamp: number) => void;
-  emitFriendRequestSent: (socket: any) => void;
+  emitTyping: (socket: AppSocket | null) => void;
+  emitStopTyping: (socket: AppSocket | null) => void;
+  emitMessageSeen: (socket: AppSocket | null, timestamp: number) => void;
+  emitFriendRequestSent: (socket: AppSocket | null) => void;
   clearFriendRequestSent: () => void;
   clearFriendRequest: () => void;
   reset: () => void;
   setFriendRequestAccepted: (accepted: boolean) => void;
-  initializeListeners: (socket: any) => () => void;
+  initializeListeners: (socket: AppSocket | null) => () => void;
 }
 
 const useRandomChatStore = create<RandomChatStore>((set, get) => ({
@@ -80,6 +80,7 @@ const useRandomChatStore = create<RandomChatStore>((set, get) => ({
   },
   setFriendRequestAccepted: (accepted) => set({ friendRequestAccepted: accepted }),
   initializeListeners: (socket) => {
+    if (!socket) return () => {};
     const handlePartnerTyping = ({ fromUserId }: { fromUserId: string }) => {
       if (fromUserId === get().partnerId) {
         set({ isPartnerTyping: true });

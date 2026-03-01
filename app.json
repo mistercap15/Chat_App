@@ -15,11 +15,15 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.khilanpatel15.ZuChat",
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
-      "permissions": ["RECEIVE_NOTIFICATIONS"],
+      "permissions": [
+        "RECEIVE_NOTIFICATIONS"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#1C1C3A"
@@ -52,6 +56,9 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "apiUrl": "http://192.168.1.110:3000"
     }
   }
 }
