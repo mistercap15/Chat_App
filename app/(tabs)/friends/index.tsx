@@ -8,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
 import useSocketStore from '@/store/useSocketStore';
 import useFriendRequestStore from '@/store/useFriendRequestStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import api from '@/utils/api';
 
 interface Friend {
@@ -19,16 +20,21 @@ const Friends = () => {
   const { user } = useUserStore();
   const { socket, connectSocket } = useSocketStore();
   const { pendingRequests, fetchPendingRequests, acceptFriendRequest, rejectFriendRequest } = useFriendRequestStore();
+  const { unreadCounts, clearUnread } = useUnreadStore();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isRemoveModalVisible, setRemoveModalVisible] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
   const lastFetchTimeRef = useRef<number | null>(null);
+  // Use a ref for in-flight state so fetchFriends doesn't re-create on every loading change,
+  // which would cause useFocusEffect to re-run and re-register socket listeners every fetch.
+  const isFetchingRef = useRef(false);
 
   const fetchFriends = useCallback(async (force = false) => {
-    if (!user?._id || (loading && !force)) return;
+    if (!user?._id || (isFetchingRef.current && !force)) return;
     if (!force && lastFetchTimeRef.current && Date.now() - lastFetchTimeRef.current < 5000) return;
+    isFetchingRef.current = true;
     setLoading(true);
     try {
       const response = await api.get('/api/users/me/friends');
@@ -37,9 +43,10 @@ const Friends = () => {
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch friends.' });
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
-  }, [user?._id, loading]);
+  }, [user?._id]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -57,29 +64,23 @@ const Friends = () => {
       fetchPendingRequests(user._id);
 
       const friendRemovedListener = ({ removedUserId }: { removedUserId: string }) => {
-        setFriends((prev) => prev.filter((friend) => friend._id !== removedUserId));
+        setFriends((prev) => prev.filter((f) => f._id !== removedUserId));
       };
+      // friend_added fires for BOTH users when a friend request is accepted.
+      // Just update local state — no API refetch needed.
       const friendAddedListener = ({ friendId: newFriendId, friendUsername }: { friendId: string; friendUsername: string }) => {
-        // Immediately add to local list, then refresh for full data
         setFriends((prev) => {
           if (prev.some((f) => f._id === newFriendId)) return prev;
           return [...prev, { _id: newFriendId, user_name: friendUsername || 'Anonymous' }];
         });
-        fetchFriends(true);
-      };
-      const friendRequestAcceptedListener = () => {
-        fetchFriends(true);
-        if (user?._id) fetchPendingRequests(user._id);
       };
 
       socket?.on('friend_removed', friendRemovedListener);
       socket?.on('friend_added', friendAddedListener);
-      socket?.on('friend_request_accepted', friendRequestAcceptedListener);
 
       return () => {
         socket?.off('friend_removed', friendRemovedListener);
         socket?.off('friend_added', friendAddedListener);
-        socket?.off('friend_request_accepted', friendRequestAcceptedListener);
       };
     }, [user?._id, connectSocket, socket, fetchFriends, fetchPendingRequests])
   );
@@ -93,7 +94,6 @@ const Friends = () => {
     try {
       await api.delete(`/api/users/friends/${friendId}`);
       setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
-      socket?.emit('friend_removed', { userId: user._id, removedUserId: friendId });
       Toast.show({ type: 'success', text1: 'Friend Removed', text2: 'The friend has been removed.' });
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to remove friend.' });
@@ -105,15 +105,18 @@ const Friends = () => {
 
   const handleAcceptRequest = async (friendId: string) => {
     await acceptFriendRequest(friendId);
-    setTimeout(() => fetchFriends(true), 500);
+    // Local state is updated by acceptFriendRequest (pending list) and the friend_added
+    // socket event (friends list). No redundant refetch needed here.
   };
 
   const handleRejectRequest = async (friendId: string) => {
     await rejectFriendRequest(friendId);
   };
 
-  const navigateToFriendChat = (friendId: string) => {
-    router.push(`/friends/${friendId}`);
+  const navigateToFriendChat = (friendId: string, friendName: string) => {
+    clearUnread(friendId);
+    // Pass friend name as param to avoid an extra friends-list API call in the chat screen
+    router.push(`/friends/${friendId}?friendName=${encodeURIComponent(friendName)}`);
   };
 
   const getInitial = (name: string) => (name || 'A').charAt(0).toUpperCase();
@@ -184,75 +187,103 @@ const Friends = () => {
     </View>
   );
 
-  const renderFriend = ({ item }: { item: Friend }) => (
-    <TouchableOpacity
-      onPress={() => navigateToFriendChat(item._id)}
-      onLongPress={() => {
-        setSelectedFriend(item);
-        setRemoveModalVisible(true);
-      }}
-      activeOpacity={0.7}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#161638',
-        borderRadius: 14,
-        padding: 14,
-        marginBottom: 8,
-        borderWidth: 1,
-        borderColor: 'rgba(124, 58, 237, 0.08)',
-      }}
-    >
-      <View style={{
-        width: 46,
-        height: 46,
-        borderRadius: 23,
-        backgroundColor: getAvatarColor(item._id),
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 14,
-      }}>
-        <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>{getInitial(item.user_name)}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{item.user_name || 'Anonymous'}</Text>
-        <Text style={{ color: '#64648F', fontSize: 12, marginTop: 2 }}>Tap to chat</Text>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <TouchableOpacity
-          onPress={() => navigateToFriendChat(item._id)}
-          activeOpacity={0.7}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: 'rgba(124, 58, 237, 0.15)',
+  const renderFriend = ({ item }: { item: Friend }) => {
+    const unreadCount = unreadCounts[item._id] || 0;
+
+    return (
+      <TouchableOpacity
+        onPress={() => navigateToFriendChat(item._id, item.user_name)}
+        onLongPress={() => {
+          setSelectedFriend(item);
+          setRemoveModalVisible(true);
+        }}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: '#161638',
+          borderRadius: 14,
+          padding: 14,
+          marginBottom: 8,
+          borderWidth: 1,
+          borderColor: unreadCount > 0 ? 'rgba(124, 58, 237, 0.25)' : 'rgba(124, 58, 237, 0.08)',
+        }}
+      >
+        {/* Avatar with unread badge */}
+        <View style={{ position: 'relative', marginRight: 14 }}>
+          <View style={{
+            width: 46,
+            height: 46,
+            borderRadius: 23,
+            backgroundColor: getAvatarColor(item._id),
             alignItems: 'center',
             justifyContent: 'center',
-          }}
-        >
-          <MessageCircle size={16} color="#7C3AED" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            setSelectedFriend(item);
-            setRemoveModalVisible(true);
-          }}
-          activeOpacity={0.7}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: 'rgba(239, 68, 68, 0.08)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <UserX size={16} color="#EF4444" />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+          }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>{getInitial(item.user_name)}</Text>
+          </View>
+          {unreadCount > 0 && (
+            <View style={{
+              position: 'absolute',
+              top: -4,
+              right: -4,
+              minWidth: 20,
+              height: 20,
+              borderRadius: 10,
+              backgroundColor: '#7C3AED',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 5,
+              borderWidth: 2,
+              borderColor: '#161638',
+            }}>
+              <Text style={{ color: 'white', fontSize: 11, fontWeight: '700' }}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{item.user_name || 'Anonymous'}</Text>
+          <Text style={{ color: unreadCount > 0 ? '#A78BFA' : '#64648F', fontSize: 12, marginTop: 2 }}>
+            {unreadCount > 0 ? `${unreadCount} new message${unreadCount > 1 ? 's' : ''}` : 'Tap to chat'}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TouchableOpacity
+            onPress={() => navigateToFriendChat(item._id, item.user_name)}
+            activeOpacity={0.7}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: 'rgba(124, 58, 237, 0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <MessageCircle size={16} color="#7C3AED" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              setSelectedFriend(item);
+              setRemoveModalVisible(true);
+            }}
+            activeOpacity={0.7}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <UserX size={16} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderHeader = () => (
     <>
@@ -362,6 +393,7 @@ const Friends = () => {
           data={friends}
           keyExtractor={(item) => item._id}
           renderItem={renderFriend}
+          extraData={unreadCounts}
           ListHeaderComponent={renderHeader}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
           refreshControl={

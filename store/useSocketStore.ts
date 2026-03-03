@@ -7,6 +7,9 @@ import Toast from 'react-native-toast-message';
 import useUserStore from './useUserStore';
 import useAuthStore from './useAuthStore';
 import useFriendRequestStore from './useFriendRequestStore';
+import useUnreadStore from './useUnreadStore';
+import useRandomChatStore from './useRandomChatStore';
+import { router } from 'expo-router';
 
 interface SocketStore {
   socket: any | null;
@@ -18,7 +21,7 @@ interface SocketStore {
 
 const useSocketStore = create<SocketStore>((set, get) => {
   const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] SocketStore: ${message}`, data || '');
+    if (__DEV__) console.log(`[${new Date().toISOString()}] SocketStore: ${message}`, data || '');
   };
 
   const connectSocket = (userId: string) => {
@@ -52,6 +55,9 @@ const useSocketStore = create<SocketStore>((set, get) => {
     // Global listeners that must work on every screen
     newSocket.on('friend_request_received', ({ fromUserId, fromUsername }: any) => {
       log('Global: friend_request_received', { fromUserId, fromUsername });
+      // Skip global toast if this request is from current random chat partner
+      // (the random chat screen handles it locally)
+      if (fromUserId === useRandomChatStore.getState().partnerId) return;
       useFriendRequestStore.getState().fetchPendingRequests(userId);
       Toast.show({ type: 'info', text1: 'Friend Request', text2: `${fromUsername || 'Someone'} wants to be your friend!` });
     });
@@ -60,22 +66,38 @@ const useSocketStore = create<SocketStore>((set, get) => {
       log('Global: friend_added', { friendId, friendUsername });
     });
 
+    // Track unread message counts for friend chat messages.
+    // This uses a dedicated event (not receive_message) to avoid double-counting:
+    // if the recipient's socket is in both the friend chat room and their personal room
+    // (because the sender called start_friend_chat), receive_message would arrive twice
+    // and inflate the badge. friend_message_notification is only emitted once, to the
+    // recipient's personal userId room.
+    newSocket.on('friend_message_notification', ({ fromUserId }: any) => {
+      const { activeChatFriendId, incrementUnread } = useUnreadStore.getState();
+      if (fromUserId && fromUserId !== userId && fromUserId !== activeChatFriendId) {
+        incrementUnread(fromUserId);
+      }
+    });
+
     newSocket.on('connect', () => {
       log('Socket connected', { userId, socketId: newSocket.id });
       set({ socket: newSocket, connectionStatus: 'connected', isConnecting: false });
-      newSocket.emit('set_username', { userId, username: user?.user_name || 'Anonymous' });
       useFriendRequestStore.getState().fetchPendingRequests(userId);
     });
 
     newSocket.on('connect_error', (err: any) => {
       log('Socket connect_error', { userId, error: err.message });
       set({ connectionStatus: 'disconnected', isConnecting: false });
+      if (err.message === 'Authentication error') {
+        useAuthStore.getState().clearToken();
+        useUserStore.getState().clearUser();
+        router.replace('/(tabs)/settings/register');
+      }
     });
 
-    newSocket.on('reconnect', (attempt:any) => {
+    newSocket.on('reconnect', (attempt: any) => {
       log('Socket reconnected', { userId, attempt });
       set({ connectionStatus: 'connected', isConnecting: false });
-      newSocket.emit('set_username', { userId, username: user?.user_name || 'Anonymous' });
       useFriendRequestStore.getState().fetchPendingRequests(userId);
     });
 
@@ -85,7 +107,7 @@ const useSocketStore = create<SocketStore>((set, get) => {
       Toast.show({ type: 'error', text1: 'Connection Lost', text2: 'Failed to reconnect.' });
     });
 
-    newSocket.on('error', ({ message }:any) => {
+    newSocket.on('error', ({ message }: any) => {
       log('Socket error', { message });
       Toast.show({ type: 'error', text1: 'Error', text2: message });
     });

@@ -5,6 +5,8 @@ import { Platform } from 'react-native';
 import api from './api';
 
 // Configure how notifications are presented when app is in foreground
+// This default handler shows all notifications; the usePushNotifications hook
+// can override per-notification via shouldShowAlert logic.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -19,7 +21,6 @@ Notifications.setNotificationHandler({
  */
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
   if (!Device.isDevice) {
-    console.log('Push notifications require a physical device');
     return null;
   }
 
@@ -34,7 +35,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   if (finalStatus !== 'granted') {
-    console.log('Push notification permission not granted');
     return null;
   }
 
@@ -44,7 +44,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     projectId,
   });
 
-  // Set up Android notification channel
+  // Set up Android notification channels
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'Default',
@@ -62,9 +62,18 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       sound: 'default',
     });
 
-    await Notifications.setNotificationChannelAsync('friend-requests', {
-      name: 'Friend Requests',
-      description: 'Friend request notifications',
+    await Notifications.setNotificationChannelAsync('social', {
+      name: 'Social',
+      description: 'Friend requests and social notifications',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#7C3AED',
+      sound: 'default',
+    });
+
+    await Notifications.setNotificationChannelAsync('matches', {
+      name: 'Matches',
+      description: 'Random chat match notifications',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#7C3AED',
@@ -77,24 +86,24 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
 /**
  * Sends the Expo push token to the backend to be saved for the current user.
+ * Backend expects PUT /api/users/push-token with { token }.
  */
 export async function savePushTokenToBackend(expoPushToken: string): Promise<void> {
   try {
-    await api.post('/api/users/push-token', { expoPushToken });
-    console.log('Push token saved to backend');
-  } catch (error) {
-    console.error('Failed to save push token to backend:', error);
+    await api.put('/api/users/push-token', { token: expoPushToken });
+  } catch {
+    // Non-critical: push token save failure is silent
   }
 }
 
 /**
  * Removes the push token from the backend (e.g., on logout/account deletion).
+ * Sends null to clear the stored token.
  */
 export async function removePushTokenFromBackend(): Promise<void> {
   try {
-    await api.delete('/api/users/push-token');
-    console.log('Push token removed from backend');
-  } catch (error) {
-    console.error('Failed to remove push token from backend:', error);
+    await api.put('/api/users/push-token', { token: null });
+  } catch {
+    // Non-critical: push token removal failure is silent
   }
 }

@@ -75,6 +75,8 @@ const Home = () => {
           startSearching(socket, (partnerId, partnerName) => {
             setPartner(partnerId, partnerName);
             router.push('/(tabs)/home/chat');
+          }, () => {
+            Toast.show({ type: 'info', text1: 'No Match Found', text2: 'No one is available right now. Try again!' });
           });
         } else {
           Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to connect to server.' });
@@ -85,6 +87,8 @@ const Home = () => {
     startSearching(socket, (partnerId, partnerName) => {
       setPartner(partnerId, partnerName);
       router.push('/(tabs)/home/chat');
+    }, () => {
+      Toast.show({ type: 'info', text1: 'No Match Found', text2: 'No one is available right now. Try again!' });
     });
   };
 

@@ -31,6 +31,13 @@ const randomNames = [
   'CyberNinja', 'AquaPhoenix', 'NebulaKid', 'IronWolf', 'CrystalVibe', 'SonicBoom',
 ];
 
+const INTERESTS = [
+  'Gaming', 'Movies', 'Music', 'Travel', 'Fitness', 'Cooking',
+  'Reading', 'Technology', 'Art', 'Photography', 'Sports', 'Anime',
+];
+
+const MAX_INTERESTS = 5;
+
 const SetUpProfile = () => {
   const { user, setUser } = useUserStore();
   const { setToken } = useAuthStore();
@@ -40,6 +47,7 @@ const SetUpProfile = () => {
   const [user_name, setUserName] = useState('');
   const [bio, setBio] = useState('');
   const [gender, setGender] = useState('');
+  const [interests, setInterests] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
   const isNewUser = !user?._id;
@@ -49,12 +57,22 @@ const SetUpProfile = () => {
       setUserName(user.user_name || '');
       setBio(user.bio || '');
       setGender(user.gender || '');
+      setInterests(user.interests || []);
     } else {
       setUserName('');
       setBio('');
       setGender('');
+      setInterests([]);
     }
   }, [user]);
+
+  const toggleInterest = (interest: string) => {
+    setInterests((prev) => {
+      if (prev.includes(interest)) return prev.filter((i) => i !== interest);
+      if (prev.length >= MAX_INTERESTS) return prev;
+      return [...prev, interest];
+    });
+  };
 
   const handleSave = async () => {
     if (!user_name.trim() || !gender) {
@@ -76,7 +94,7 @@ const SetUpProfile = () => {
         user_name: user_name.trim(),
         gender,
         bio: bio.trim(),
-        interests: user?.interests || [],
+        interests,
       };
 
       let response;
@@ -93,10 +111,6 @@ const SetUpProfile = () => {
 
       const newUser = response.data.user;
       setUser(newUser);
-
-      if (socket?.connected && newUser._id) {
-        socket.emit('set_username', { userId: newUser._id, username: newUser.user_name || 'Anonymous' });
-      }
 
       if (newUser._id && /^[0-9a-fA-F]{24}$/.test(newUser._id)) {
         if (!socket?.connected || connectionStatus === 'disconnected') {
@@ -117,6 +131,10 @@ const SetUpProfile = () => {
       if (isExistingUser) {
         navigation.goBack();
       } else {
+        // Navigate to settings/index first to reset the stack, then go to home.
+        // This ensures the settings tab always shows the profile/settings page,
+        // not the register form, when the user taps the settings tab later.
+        navigation.navigate('index' as never);
         router.replace('/(tabs)/home');
       }
     } catch (error: any) {
@@ -291,6 +309,46 @@ const SetUpProfile = () => {
             />
             <Text style={{ color: '#64648F', fontSize: 12, marginTop: 6, paddingLeft: 2 }}>
               Optional - helps your chat partners get to know you
+            </Text>
+          </View>
+
+          {/* Interests */}
+          <View style={{ marginBottom: 24 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600' }}>Interests</Text>
+              <Text style={{ color: interests.length >= MAX_INTERESTS ? '#F59E0B' : '#64648F', fontSize: 12 }}>
+                {interests.length}/{MAX_INTERESTS}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {INTERESTS.map((interest) => {
+                const selected = interests.includes(interest);
+                const atMax = interests.length >= MAX_INTERESTS && !selected;
+                return (
+                  <TouchableOpacity
+                    key={interest}
+                    onPress={() => toggleInterest(interest)}
+                    disabled={isSaving || atMax}
+                    activeOpacity={0.7}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      backgroundColor: selected ? 'rgba(124, 58, 237, 0.2)' : '#161638',
+                      borderWidth: 1,
+                      borderColor: selected ? '#7C3AED' : 'rgba(124, 58, 237, 0.08)',
+                      opacity: atMax ? 0.4 : 1,
+                    }}
+                  >
+                    <Text style={{ color: selected ? '#A78BFA' : '#8888AA', fontSize: 13, fontWeight: '500' }}>
+                      {interest}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={{ color: '#64648F', fontSize: 12, marginTop: 6, paddingLeft: 2 }}>
+              Select up to {MAX_INTERESTS} interests for better matching
             </Text>
           </View>
 

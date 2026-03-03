@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { AppState, AppStateStatus } from 'react-native';
 import useUserStore from '@/store/useUserStore';
 import useAuthStore from '@/store/useAuthStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import { registerForPushNotificationsAsync, savePushTokenToBackend } from '@/utils/notifications';
 
 /**
@@ -49,11 +50,36 @@ export default function usePushNotifications() {
 
   // Listen for incoming notifications while app is in foreground
   useEffect(() => {
+    // Override the default handler to suppress notifications when user is in the relevant chat
+    Notifications.setNotificationHandler({
+      handleNotification: async (notification) => {
+        const data = notification.request.content.data;
+        const activeChatFriendId = useUnreadStore.getState().activeChatFriendId;
+
+        // Suppress message notifications if user is viewing that friend's chat
+        if (data?.type === 'message' && data?.senderId === activeChatFriendId) {
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          };
+        }
+
+        return {
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: true,
+        };
+      },
+    });
+
     notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
-      // Notification received in foreground - the handler in notifications.ts
-      // controls whether it shows as an alert. We can add custom logic here
-      // if needed (e.g., suppress notification if user is already in that chat).
-      console.log('Notification received in foreground:', notification.request.content.title);
+      const data = notification.request.content.data;
+
+      // Track unread counts for incoming message notifications
+      if (data?.type === 'message' && data?.senderId) {
+        useUnreadStore.getState().incrementUnread(data.senderId);
+      }
     });
 
     // Handle notification tap (user tapped on the notification)
@@ -62,10 +88,15 @@ export default function usePushNotifications() {
 
       if (data?.type === 'friend_request') {
         router.push('/(tabs)/friends');
-      } else if (data?.type === 'friend_message' && data?.friendId) {
-        router.push(`/friends/${data.friendId}`);
+      } else if (data?.type === 'message' && data?.senderId) {
+        // Backend sends type: 'message' with senderId for friend chat messages
+        useUnreadStore.getState().clearUnread(data.senderId);
+        router.push(`/friends/${data.senderId}`);
       } else if (data?.type === 'friend_accepted') {
         router.push('/(tabs)/friends');
+      } else if (data?.type === 'random_match') {
+        // Navigate to the home/chat tab when a random match is found
+        router.push('/(tabs)/home');
       }
     });
 

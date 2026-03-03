@@ -56,7 +56,8 @@
     "uuid": "^11.1.0",
     "zustand": "^5.0.4",
     "expo-notifications": "~0.29.14",
-    "expo-device": "~7.0.3"
+    "expo-device": "~7.0.3",
+    "expo-image-picker": "~16.0.6"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Animated } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Animated, ActivityIndicator } from 'react-native';
 import moment from 'moment';
 import { Ionicons } from '@expo/vector-icons';
 import { ChevronLeft, Send } from 'lucide-react-native';
@@ -9,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import useSocketStore from '@/store/useSocketStore';
 import useUserStore from '@/store/useUserStore';
 import useFriendChatStore from '@/store/useFriendChatStore';
+import useUnreadStore from '@/store/useUnreadStore';
 import api from '@/utils/api';
 
 interface Message {
@@ -74,6 +74,10 @@ const FriendChat = () => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastTypingTime, setLastTypingTime] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [friendStatus, setFriendStatus] = useState<{ isActive: boolean; lastSeen?: string } | null>(null);
   const lastSentRef = useRef<{ text: string; time: number } | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -82,7 +86,7 @@ const FriendChat = () => {
   const isMounted = useRef(true);
   const previousFriendId = useRef<string | null>(null);
 
-  const { friendId } = useLocalSearchParams<{ friendId: string }>();
+  const { friendId, friendName: paramFriendName } = useLocalSearchParams<{ friendId: string; friendName?: string }>();
   const { socket, connectionStatus, connectSocket } = useSocketStore();
   const { user } = useUserStore();
   const {
@@ -113,6 +117,29 @@ const FriendChat = () => {
     };
   }, [socket, initializeListeners]);
 
+  // Navigate back immediately if this specific friend is removed while the chat is open
+  useEffect(() => {
+    if (!socket) return;
+    const handleFriendRemovedInChat = ({ removedUserId }: { removedUserId: string }) => {
+      if (removedUserId === friendId && isMounted.current) {
+        navigateToFriends();
+      }
+    };
+    socket.on('friend_removed', handleFriendRemovedInChat);
+    return () => socket.off('friend_removed', handleFriendRemovedInChat);
+  }, [socket, friendId]);
+
+  // Track which friend chat is active so unread counts are suppressed
+  useEffect(() => {
+    if (friendId && /^[0-9a-fA-F]{24}$/.test(friendId)) {
+      useUnreadStore.getState().setActiveChatFriendId(friendId);
+      useUnreadStore.getState().clearUnread(friendId);
+    }
+    return () => {
+      useUnreadStore.getState().setActiveChatFriendId(null);
+    };
+  }, [friendId]);
+
   useEffect(() => {
     if (!friendId || !/^[0-9a-fA-F]{24}$/.test(friendId) || !user?._id) {
       navigateToFriends();
@@ -128,43 +155,75 @@ const FriendChat = () => {
 
     const initializeChat = async () => {
       try {
-        const response = await api.get('/api/users/me/friends');
-        const friend = response.data.friends.find((f: any) => f._id === friendId);
-        if (!friend) {
-          navigateToFriends();
-          return;
+        // Use the name passed via navigation params if available to avoid an extra API call.
+        // If no name was passed, fetch it from the friends list.
+        let resolvedName = paramFriendName ? decodeURIComponent(paramFriendName) : null;
+
+        if (!resolvedName) {
+          try {
+            const response = await api.get('/api/users/me/friends');
+            const friend = response.data.friends.find((f: any) => f._id === friendId);
+            if (friend) resolvedName = friend.user_name;
+          } catch {
+            // Non-critical — will fall back to 'Friend'
+          }
         }
-        setPartner(friendId, friend.user_name || 'Anonymous');
+
+        setPartner(friendId, resolvedName || 'Friend');
         setMessages([]);
-        const fetchedMessages = await fetchChatHistory(friendId);
-        setMessages((prev) => {
-          const existingIds = new Set(prev.map((msg) => msg.backendMessageId || msg.messageId).filter(Boolean));
-          const newMessages = fetchedMessages
-            .filter((msg) => !existingIds.has(msg.messageId))
-            .map((msg) => ({ ...msg, backendMessageId: msg.messageId }));
-          return [...prev, ...newMessages];
-        });
-        flatListRef.current?.scrollToEnd({ animated: true });
+        setPage(1);
+
+        const result = await fetchChatHistory(friendId, 1);
+        if (!isMounted.current) return;
+
+        // Reverse so newest is at index 0 (inverted FlatList shows index 0 at bottom)
+        const reversed = [...result.messages].reverse();
+        setMessages(reversed.map((msg) => ({ ...msg, backendMessageId: msg.messageId })));
+        setHasMore(result.hasMore);
+
+        // Mark messages as seen via HTTP (best-effort)
+        if (result.messages.length > 0) {
+          const latestMsg = result.messages[result.messages.length - 1];
+          api.post('/api/chats/seen', { friendId, timestamp: latestMsg.timestamp }).catch(() => {});
+        }
       } catch (error: any) {
-        Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load chat.' });
-        navigateToFriends();
+        if (!isMounted.current) return;
+        // 403 = no longer friends; other errors are transient (show error but don't kick user out)
+        if (error.response?.status === 403) {
+          Toast.show({ type: 'error', text1: 'Not Friends', text2: 'You are no longer friends with this user.' });
+          navigateToFriends();
+        } else {
+          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load messages. Pull to retry.' });
+          // Don't navigate away on generic errors — let the user see the chat UI
+        }
+      }
+    };
+
+    // Fetch friend's online status
+    const fetchFriendStatus = async () => {
+      try {
+        const response = await api.get(`/api/users/${friendId}`);
+        const { isActive, lastSeen } = response.data;
+        setFriendStatus({ isActive: !!isActive, lastSeen });
+      } catch {
+        // Non-critical
       }
     };
 
     initializeChat();
+    fetchFriendStatus();
 
     return () => {
-      socket?.emit('leave_friend_chat', { userId: user._id, friendId });
+      socket?.emit('leave_friend_chat', { friendId });
       setMessages([]);
       isChatInitialized.current = false;
       hasInitialized.current = false;
       previousFriendId.current = null;
     };
-  }, [friendId, user?._id, socket, setPartner, fetchChatHistory, connectSocket]);
+  }, [friendId, paramFriendName, user?._id, socket, setPartner, fetchChatHistory, connectSocket]);
 
   useEffect(() => {
     if (!socket?.connected || connectionStatus !== 'connected') return;
-    // Room joining is handled server-side by start_friend_chat.
     startFriendChat(socket, friendId, () => {
       isChatInitialized.current = true;
     });
@@ -198,42 +257,23 @@ const FriendChat = () => {
             );
           if (isDuplicate) return prev;
           const newMessage: Message = { messageId, backendMessageId: messageId, text: message, sender: 'friend', timestamp, seen: false };
-          flatListRef.current?.scrollToEnd({ animated: true });
-          return [...prev, newMessage];
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          return [newMessage, ...prev];
         });
-        emitMessageSeen(socket, timestamp, messageId);
+        emitMessageSeen(socket, timestamp);
       }
     };
 
-    const messageSeenListener = ({ fromUserId, timestamp, messageId }: { fromUserId: string; timestamp: number; messageId?: string }) => {
+    const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number; messageId?: string }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
-      setMessages((prev) => {
-        // 1) Try matching by backendMessageId (most reliable — backend's _id)
-        if (messageId) {
-          const updated = prev.map((msg) =>
-            msg.sender === 'user' && !msg.seen && msg.backendMessageId === messageId
-              ? { ...msg, seen: true }
-              : msg
-          );
-          if (updated.some((msg, i) => msg !== prev[i])) return updated;
-        }
-        // 2) Try exact client timestamp match (works for random-chat style flows)
-        const byTimestamp = prev.map((msg) =>
-          msg.sender === 'user' && !msg.seen && msg.timestamp === timestamp
+      // Mark ALL unseen user messages up to and including this timestamp as seen
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.sender === 'user' && !msg.seen && msg.timestamp <= timestamp
             ? { ...msg, seen: true }
             : msg
-        );
-        if (byTimestamp.some((msg, i) => msg !== prev[i])) return byTimestamp;
-        // 3) Fallback: mark the oldest unseen user message (handles server-time drift)
-        let marked = false;
-        return prev.map((msg) => {
-          if (!marked && msg.sender === 'user' && !msg.seen) {
-            marked = true;
-            return { ...msg, seen: true };
-          }
-          return msg;
-        });
-      });
+        )
+      );
     };
 
     socket.on('receive_message', messageListener);
@@ -256,11 +296,34 @@ const FriendChat = () => {
     router.replace('/(tabs)/friends');
   };
 
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    const nextPage = page + 1;
+    try {
+      const result = await fetchChatHistory(friendId, nextPage);
+      // Older messages appended to END of array (appear at top in inverted list)
+      const reversed = [...result.messages].reverse();
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((msg) => msg.backendMessageId || msg.messageId).filter(Boolean));
+        const newMessages = reversed
+          .filter((msg) => !existingIds.has(msg.messageId))
+          .map((msg) => ({ ...msg, backendMessageId: msg.messageId }));
+        return [...prev, ...newMessages];
+      });
+      setHasMore(result.hasMore);
+      setPage(nextPage);
+    } catch {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load earlier messages.' });
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   const handleSendMessage = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
-    // Prevent double-tap sending the exact same message within 500ms
     const now = Date.now();
     if (lastSentRef.current && lastSentRef.current.text === trimmed && now - lastSentRef.current.time < 500) return;
     lastSentRef.current = { text: trimmed, time: now };
@@ -268,15 +331,12 @@ const FriendChat = () => {
     const timestamp = now;
     const clientMessageId = `${user?._id}-${timestamp}`;
     const newMessage: Message = { messageId: clientMessageId, text: trimmed, sender: 'user', timestamp, seen: false };
-    setMessages((prev) => [...prev, newMessage]);
+    setMessages((prev) => [newMessage, ...prev]);
     setInput('');
-    flatListRef.current?.scrollToEnd({ animated: true });
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
 
     try {
-      // HTTP sendMessage saves to DB and emits receive_message to the socket room.
-      // Do NOT also emit send_message via socket — that causes double delivery.
-      const result = await sendMessage(friendId, trimmed);
-      // Update local message with backend's _id so message_seen can match it
+      const result = await sendMessage(friendId, trimmed, clientMessageId);
       if (result?.messageId) {
         setMessages((prev) =>
           prev.map((msg) =>
@@ -308,11 +368,26 @@ const FriendChat = () => {
 
   const getInitial = () => (partnerName || 'F').charAt(0).toUpperCase();
 
+  const getStatusText = () => {
+    if (connectionStatus === 'disconnected') return 'Reconnecting...';
+    if (!friendStatus) return 'Online';
+    if (friendStatus.isActive) return 'Online';
+    if (friendStatus.lastSeen) return `Last seen ${moment(friendStatus.lastSeen).fromNow()}`;
+    return 'Offline';
+  };
+
+  const getStatusColor = () => {
+    if (connectionStatus === 'disconnected') return '#F59E0B';
+    if (!friendStatus || friendStatus.isActive) return '#22C55E';
+    return '#8888AA';
+  };
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isUser = item.sender === 'user';
+    // With inverted list, index 0 = newest (at bottom), index+1 = older message
     const showTimestamp = index === messages.length - 1 ||
       messages[index + 1]?.sender !== item.sender ||
-      (messages[index + 1]?.timestamp - item.timestamp > 60000);
+      (item.timestamp - (messages[index + 1]?.timestamp ?? item.timestamp) > 60000);
 
     return (
       <View style={{
@@ -331,23 +406,26 @@ const FriendChat = () => {
         }}>
           <Text style={{ color: 'white', fontSize: 15, lineHeight: 20 }}>{item.text}</Text>
         </View>
-        {showTimestamp && (
+        {/* Always render the bottom row for user messages so tick is always visible */}
+        {(showTimestamp || isUser) && (
           <View style={{
             flexDirection: 'row',
             justifyContent: isUser ? 'flex-end' : 'flex-start',
             alignItems: 'center',
             marginTop: 3,
             paddingHorizontal: 4,
-            gap: 6,
+            gap: 4,
           }}>
-            <Text style={{ fontSize: 11, color: '#64648F' }}>
-              {moment(item.timestamp).format('h:mm A')}
-            </Text>
+            {showTimestamp && (
+              <Text style={{ fontSize: 11, color: '#64648F' }}>
+                {moment(item.timestamp).format('h:mm A')}
+              </Text>
+            )}
             {isUser && (
               <Ionicons
                 name={item.seen ? "checkmark-done" : "checkmark"}
-                size={14}
-                color={item.seen ? "#7C3AED" : "#64648F"}
+                size={13}
+                color={item.seen ? "#A78BFA" : "#8888AA"}
               />
             )}
           </View>
@@ -357,7 +435,11 @@ const FriendChat = () => {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       <View style={{ flex: 1, backgroundColor: '#0F0F2D' }}>
         {/* Header */}
         <View style={{
@@ -386,13 +468,11 @@ const FriendChat = () => {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{partnerName || 'Friend'}</Text>
-            <Text style={{ color: connectionStatus === 'disconnected' ? '#F59E0B' : '#22C55E', fontSize: 11 }}>
-              {connectionStatus === 'disconnected' ? 'Reconnecting...' : 'Online'}
-            </Text>
+            <Text style={{ color: getStatusColor(), fontSize: 11 }}>{getStatusText()}</Text>
           </View>
         </View>
 
-        {/* Messages */}
+        {/* Messages — inverted so newest appear at bottom */}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -400,7 +480,35 @@ const FriendChat = () => {
           renderItem={renderMessage}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 8, paddingHorizontal: 12 }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          inverted
+          ListFooterComponent={
+            hasMore ? (
+              <TouchableOpacity
+                onPress={handleLoadMore}
+                disabled={isLoadingMore}
+                activeOpacity={0.7}
+                style={{
+                  alignSelf: 'center',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  marginVertical: 8,
+                  backgroundColor: 'rgba(124, 58, 237, 0.08)',
+                  borderRadius: 20,
+                  borderWidth: 1,
+                  borderColor: 'rgba(124, 58, 237, 0.15)',
+                }}
+              >
+                {isLoadingMore ? (
+                  <ActivityIndicator size="small" color="#7C3AED" />
+                ) : (
+                  <Text style={{ color: '#A78BFA', fontSize: 13, fontWeight: '500' }}>Load earlier messages</Text>
+                )}
+              </TouchableOpacity>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
               <Ionicons name="chatbubbles-outline" size={48} color="#2A2A5A" />
