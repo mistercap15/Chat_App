@@ -20,6 +20,7 @@
     },
     "android": {
       "permissions": ["RECEIVE_NOTIFICATIONS"],
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#1C1C3A"

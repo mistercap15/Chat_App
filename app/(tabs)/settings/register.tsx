@@ -131,6 +131,10 @@ const SetUpProfile = () => {
       if (isExistingUser) {
         navigation.goBack();
       } else {
+        // Navigate to settings/index first to reset the stack, then go to home.
+        // This ensures the settings tab always shows the profile/settings page,
+        // not the register form, when the user taps the settings tab later.
+        navigation.navigate('index' as never);
         router.replace('/(tabs)/home');
       }
     } catch (error: any) {

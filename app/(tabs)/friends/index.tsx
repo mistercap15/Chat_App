@@ -27,10 +27,14 @@ const Friends = () => {
   const [isRemoveModalVisible, setRemoveModalVisible] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
   const lastFetchTimeRef = useRef<number | null>(null);
+  // Use a ref for in-flight state so fetchFriends doesn't re-create on every loading change,
+  // which would cause useFocusEffect to re-run and re-register socket listeners every fetch.
+  const isFetchingRef = useRef(false);
 
   const fetchFriends = useCallback(async (force = false) => {
-    if (!user?._id || (loading && !force)) return;
+    if (!user?._id || (isFetchingRef.current && !force)) return;
     if (!force && lastFetchTimeRef.current && Date.now() - lastFetchTimeRef.current < 5000) return;
+    isFetchingRef.current = true;
     setLoading(true);
     try {
       const response = await api.get('/api/users/me/friends');
@@ -39,9 +43,10 @@ const Friends = () => {
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch friends.' });
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
-  }, [user?._id, loading]);
+  }, [user?._id]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -59,29 +64,23 @@ const Friends = () => {
       fetchPendingRequests(user._id);
 
       const friendRemovedListener = ({ removedUserId }: { removedUserId: string }) => {
-        setFriends((prev) => prev.filter((friend) => friend._id !== removedUserId));
+        setFriends((prev) => prev.filter((f) => f._id !== removedUserId));
       };
+      // friend_added fires for BOTH users when a friend request is accepted.
+      // Just update local state — no API refetch needed.
       const friendAddedListener = ({ friendId: newFriendId, friendUsername }: { friendId: string; friendUsername: string }) => {
-        // Immediately add to local list, then refresh for full data
         setFriends((prev) => {
           if (prev.some((f) => f._id === newFriendId)) return prev;
           return [...prev, { _id: newFriendId, user_name: friendUsername || 'Anonymous' }];
         });
-        fetchFriends(true);
-      };
-      const friendRequestAcceptedListener = () => {
-        fetchFriends(true);
-        if (user?._id) fetchPendingRequests(user._id);
       };
 
       socket?.on('friend_removed', friendRemovedListener);
       socket?.on('friend_added', friendAddedListener);
-      socket?.on('friend_request_accepted', friendRequestAcceptedListener);
 
       return () => {
         socket?.off('friend_removed', friendRemovedListener);
         socket?.off('friend_added', friendAddedListener);
-        socket?.off('friend_request_accepted', friendRequestAcceptedListener);
       };
     }, [user?._id, connectSocket, socket, fetchFriends, fetchPendingRequests])
   );
@@ -106,16 +105,18 @@ const Friends = () => {
 
   const handleAcceptRequest = async (friendId: string) => {
     await acceptFriendRequest(friendId);
-    setTimeout(() => fetchFriends(true), 500);
+    // Local state is updated by acceptFriendRequest (pending list) and the friend_added
+    // socket event (friends list). No redundant refetch needed here.
   };
 
   const handleRejectRequest = async (friendId: string) => {
     await rejectFriendRequest(friendId);
   };
 
-  const navigateToFriendChat = (friendId: string) => {
+  const navigateToFriendChat = (friendId: string, friendName: string) => {
     clearUnread(friendId);
-    router.push(`/friends/${friendId}`);
+    // Pass friend name as param to avoid an extra friends-list API call in the chat screen
+    router.push(`/friends/${friendId}?friendName=${encodeURIComponent(friendName)}`);
   };
 
   const getInitial = (name: string) => (name || 'A').charAt(0).toUpperCase();
@@ -191,7 +192,7 @@ const Friends = () => {
 
     return (
       <TouchableOpacity
-        onPress={() => navigateToFriendChat(item._id)}
+        onPress={() => navigateToFriendChat(item._id, item.user_name)}
         onLongPress={() => {
           setSelectedFriend(item);
           setRemoveModalVisible(true);
@@ -249,7 +250,7 @@ const Friends = () => {
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
-            onPress={() => navigateToFriendChat(item._id)}
+            onPress={() => navigateToFriendChat(item._id, item.user_name)}
             activeOpacity={0.7}
             style={{
               width: 36,
@@ -392,6 +393,7 @@ const Friends = () => {
           data={friends}
           keyExtractor={(item) => item._id}
           renderItem={renderFriend}
+          extraData={unreadCounts}
           ListHeaderComponent={renderHeader}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
           refreshControl={

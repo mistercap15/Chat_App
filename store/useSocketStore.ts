@@ -66,13 +66,16 @@ const useSocketStore = create<SocketStore>((set, get) => {
       log('Global: friend_added', { friendId, friendUsername });
     });
 
-    // Track unread message counts globally — only for friend chat messages
-    // received when the user is NOT actively viewing that friend's chat.
-    newSocket.on('receive_message', ({ fromUserId }: any) => {
-      // Skip if this is from the current random chat partner (random chat handles its own messages)
-      if (fromUserId === useRandomChatStore.getState().partnerId) return;
-      if (fromUserId && fromUserId !== userId) {
-        useUnreadStore.getState().incrementUnread(fromUserId);
+    // Track unread message counts for friend chat messages.
+    // This uses a dedicated event (not receive_message) to avoid double-counting:
+    // if the recipient's socket is in both the friend chat room and their personal room
+    // (because the sender called start_friend_chat), receive_message would arrive twice
+    // and inflate the badge. friend_message_notification is only emitted once, to the
+    // recipient's personal userId room.
+    newSocket.on('friend_message_notification', ({ fromUserId }: any) => {
+      const { activeChatFriendId, incrementUnread } = useUnreadStore.getState();
+      if (fromUserId && fromUserId !== userId && fromUserId !== activeChatFriendId) {
+        incrementUnread(fromUserId);
       }
     });
 

@@ -272,7 +272,8 @@ const Chat = () => {
     };
 
     const partnerDisconnectedListener = ({ disconnectedUserId }: { disconnectedUserId: string }) => {
-      if (!isMounted.current || disconnectedUserId !== partnerId || !isChatInitialized.current || chatEnded) return;
+      // Ignore partner_disconnected if the chat is ending due to a friend request acceptance
+      if (!isMounted.current || disconnectedUserId !== partnerId || !isChatInitialized.current || chatEnded || friendRequestAccepted) return;
       const now = Date.now();
       if (lastDisconnectTime && now - lastDisconnectTime < DISCONNECT_GRACE_PERIOD) return;
       setLastDisconnectTime(now);
@@ -286,8 +287,13 @@ const Chat = () => {
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
+      // Mark ALL unseen user messages up to and including this timestamp as seen
       setMessages((prev) =>
-        prev.map((msg) => (msg.sender === "user" && msg.timestamp === timestamp ? { ...msg, seen: true } : msg))
+        prev.map((msg) =>
+          msg.sender === "user" && !msg.seen && msg.timestamp <= timestamp
+            ? { ...msg, seen: true }
+            : msg
+        )
       );
     };
 
@@ -300,7 +306,7 @@ const Chat = () => {
       socket.off("partner_disconnected", partnerDisconnectedListener);
       socket.off("message_seen", messageSeenListener);
     };
-  }, [socket, partnerId, user?._id, emitMessageSeen, chatEnded]);
+  }, [socket, partnerId, user?._id, emitMessageSeen, chatEnded, friendRequestAccepted]);
 
   useEffect(() => {
     if (isPartnerTyping) {
@@ -552,23 +558,26 @@ const Chat = () => {
         }}>
           <Text style={{ color: 'white', fontSize: 15, lineHeight: 20 }}>{item.text}</Text>
         </View>
-        {showTimestamp && (
+        {/* Always render the bottom row for user messages so tick is always visible */}
+        {(showTimestamp || isUser) && (
           <View style={{
             flexDirection: 'row',
             justifyContent: isUser ? 'flex-end' : 'flex-start',
             alignItems: 'center',
             marginTop: 3,
             paddingHorizontal: 4,
-            gap: 6,
+            gap: 4,
           }}>
-            <Text style={{ fontSize: 11, color: '#64648F' }}>
-              {moment(item.timestamp).format("h:mm A")}
-            </Text>
+            {showTimestamp && (
+              <Text style={{ fontSize: 11, color: '#64648F' }}>
+                {moment(item.timestamp).format("h:mm A")}
+              </Text>
+            )}
             {isUser && (
               <Ionicons
                 name={item.seen ? "checkmark-done" : "checkmark"}
-                size={14}
-                color={item.seen ? "#7C3AED" : "#64648F"}
+                size={13}
+                color={item.seen ? "#A78BFA" : "#8888AA"}
               />
             )}
           </View>
@@ -580,8 +589,8 @@ const Chat = () => {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior="padding"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
     >
       <View style={{ flex: 1, backgroundColor: '#0F0F2D' }}>
         {/* Header */}

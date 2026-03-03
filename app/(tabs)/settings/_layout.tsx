@@ -13,6 +13,8 @@ export default function SettingsLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="register" />
+        <Stack.Screen name="privacy-policy" />
+        <Stack.Screen name="terms" />
       </Stack>
     </ThemedLayout>
   );

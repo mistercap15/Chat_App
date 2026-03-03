@@ -32,7 +32,7 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
   startFriendChat: (socket, friendId, onStarted) => {
     const userId = useUserStore.getState().user?._id;
     if (!userId || !friendId || !socket?.connected) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or friend ID.' });
+      // Socket not ready yet — the effect in the chat screen will retry when it connects
       return;
     }
 
@@ -129,7 +129,12 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
       }
     };
     const handleFriendRemoved = ({ removedUserId }: { removedUserId: string }) => {
-      if (removedUserId === get().partnerId) {
+      const partnerId = get().partnerId;
+      if (removedUserId === partnerId) {
+        // Leave the socket room before resetting so the server can clean up gracefully
+        if (socket?.connected && partnerId) {
+          socket.emit('leave_friend_chat', { friendId: partnerId });
+        }
         Toast.show({ type: 'info', text1: 'Friend Removed', text2: 'This friend has been removed.' });
         get().reset();
       }

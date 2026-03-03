@@ -86,7 +86,7 @@ const FriendChat = () => {
   const isMounted = useRef(true);
   const previousFriendId = useRef<string | null>(null);
 
-  const { friendId } = useLocalSearchParams<{ friendId: string }>();
+  const { friendId, friendName: paramFriendName } = useLocalSearchParams<{ friendId: string; friendName?: string }>();
   const { socket, connectionStatus, connectSocket } = useSocketStore();
   const { user } = useUserStore();
   const {
@@ -117,6 +117,18 @@ const FriendChat = () => {
     };
   }, [socket, initializeListeners]);
 
+  // Navigate back immediately if this specific friend is removed while the chat is open
+  useEffect(() => {
+    if (!socket) return;
+    const handleFriendRemovedInChat = ({ removedUserId }: { removedUserId: string }) => {
+      if (removedUserId === friendId && isMounted.current) {
+        navigateToFriends();
+      }
+    };
+    socket.on('friend_removed', handleFriendRemovedInChat);
+    return () => socket.off('friend_removed', handleFriendRemovedInChat);
+  }, [socket, friendId]);
+
   // Track which friend chat is active so unread counts are suppressed
   useEffect(() => {
     if (friendId && /^[0-9a-fA-F]{24}$/.test(friendId)) {
@@ -143,34 +155,47 @@ const FriendChat = () => {
 
     const initializeChat = async () => {
       try {
-        const response = await api.get('/api/users/me/friends');
-        const friend = response.data.friends.find((f: any) => f._id === friendId);
-        if (!friend) {
-          navigateToFriends();
-          return;
+        // Use the name passed via navigation params if available to avoid an extra API call.
+        // If no name was passed, fetch it from the friends list.
+        let resolvedName = paramFriendName ? decodeURIComponent(paramFriendName) : null;
+
+        if (!resolvedName) {
+          try {
+            const response = await api.get('/api/users/me/friends');
+            const friend = response.data.friends.find((f: any) => f._id === friendId);
+            if (friend) resolvedName = friend.user_name;
+          } catch {
+            // Non-critical — will fall back to 'Friend'
+          }
         }
-        setPartner(friendId, friend.user_name || 'Anonymous');
+
+        setPartner(friendId, resolvedName || 'Friend');
         setMessages([]);
         setPage(1);
 
         const result = await fetchChatHistory(friendId, 1);
+        if (!isMounted.current) return;
+
         // Reverse so newest is at index 0 (inverted FlatList shows index 0 at bottom)
         const reversed = [...result.messages].reverse();
         setMessages(reversed.map((msg) => ({ ...msg, backendMessageId: msg.messageId })));
         setHasMore(result.hasMore);
 
-        // Mark messages as seen via HTTP
+        // Mark messages as seen via HTTP (best-effort)
         if (result.messages.length > 0) {
           const latestMsg = result.messages[result.messages.length - 1];
-          try {
-            await api.post('/api/chats/seen', { friendId, timestamp: latestMsg.timestamp });
-          } catch {
-            // Non-critical: ignore read receipt failures
-          }
+          api.post('/api/chats/seen', { friendId, timestamp: latestMsg.timestamp }).catch(() => {});
         }
       } catch (error: any) {
-        Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load chat.' });
-        navigateToFriends();
+        if (!isMounted.current) return;
+        // 403 = no longer friends; other errors are transient (show error but don't kick user out)
+        if (error.response?.status === 403) {
+          Toast.show({ type: 'error', text1: 'Not Friends', text2: 'You are no longer friends with this user.' });
+          navigateToFriends();
+        } else {
+          Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load messages. Pull to retry.' });
+          // Don't navigate away on generic errors — let the user see the chat UI
+        }
       }
     };
 
@@ -195,7 +220,7 @@ const FriendChat = () => {
       hasInitialized.current = false;
       previousFriendId.current = null;
     };
-  }, [friendId, user?._id, socket, setPartner, fetchChatHistory, connectSocket]);
+  }, [friendId, paramFriendName, user?._id, socket, setPartner, fetchChatHistory, connectSocket]);
 
   useEffect(() => {
     if (!socket?.connected || connectionStatus !== 'connected') return;
@@ -239,32 +264,16 @@ const FriendChat = () => {
       }
     };
 
-    const messageSeenListener = ({ fromUserId, timestamp, messageId }: { fromUserId: string; timestamp: number; messageId?: string }) => {
+    const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number; messageId?: string }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
-      setMessages((prev) => {
-        if (messageId) {
-          const updated = prev.map((msg) =>
-            msg.sender === 'user' && !msg.seen && msg.backendMessageId === messageId
-              ? { ...msg, seen: true }
-              : msg
-          );
-          if (updated.some((msg, i) => msg !== prev[i])) return updated;
-        }
-        const byTimestamp = prev.map((msg) =>
-          msg.sender === 'user' && !msg.seen && msg.timestamp === timestamp
+      // Mark ALL unseen user messages up to and including this timestamp as seen
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.sender === 'user' && !msg.seen && msg.timestamp <= timestamp
             ? { ...msg, seen: true }
             : msg
-        );
-        if (byTimestamp.some((msg, i) => msg !== prev[i])) return byTimestamp;
-        let marked = false;
-        return prev.map((msg) => {
-          if (!marked && msg.sender === 'user' && !msg.seen) {
-            marked = true;
-            return { ...msg, seen: true };
-          }
-          return msg;
-        });
-      });
+        )
+      );
     };
 
     socket.on('receive_message', messageListener);
@@ -397,23 +406,26 @@ const FriendChat = () => {
         }}>
           <Text style={{ color: 'white', fontSize: 15, lineHeight: 20 }}>{item.text}</Text>
         </View>
-        {showTimestamp && (
+        {/* Always render the bottom row for user messages so tick is always visible */}
+        {(showTimestamp || isUser) && (
           <View style={{
             flexDirection: 'row',
             justifyContent: isUser ? 'flex-end' : 'flex-start',
             alignItems: 'center',
             marginTop: 3,
             paddingHorizontal: 4,
-            gap: 6,
+            gap: 4,
           }}>
-            <Text style={{ fontSize: 11, color: '#64648F' }}>
-              {moment(item.timestamp).format('h:mm A')}
-            </Text>
+            {showTimestamp && (
+              <Text style={{ fontSize: 11, color: '#64648F' }}>
+                {moment(item.timestamp).format('h:mm A')}
+              </Text>
+            )}
             {isUser && (
               <Ionicons
                 name={item.seen ? "checkmark-done" : "checkmark"}
-                size={14}
-                color={item.seen ? "#7C3AED" : "#64648F"}
+                size={13}
+                color={item.seen ? "#A78BFA" : "#8888AA"}
               />
             )}
           </View>
@@ -425,8 +437,8 @@ const FriendChat = () => {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior="padding"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
     >
       <View style={{ flex: 1, backgroundColor: '#0F0F2D' }}>
         {/* Header */}
