@@ -13,9 +13,10 @@ interface FriendChatStore {
   setPartnerTyping: (isTyping: boolean) => void;
   startFriendChat: (socket: any, friendId: string, onStarted: () => void) => void;
   emitTyping: (socket: any) => void;
-  emitMessageSeen: (socket: any, timestamp: number) => void;
+  emitStopTyping: (socket: any) => void;
+  emitMessageSeen: (socket: any, timestamp: number, messageId?: string) => void;
   fetchChatHistory: (friendId: string) => Promise<any[]>;
-  sendMessage: (friendId: string, message: string) => Promise<void>;
+  sendMessage: (friendId: string, message: string) => Promise<{ messageId: string; timestamp: number } | null>;
   reset: () => void;
   initializeListeners: (socket: any) => () => void;
 }
@@ -26,7 +27,6 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
   isPartnerTyping: false,
   chatType: null,
   setPartner: (partnerId, partnerName) => {
-    console.log(`[${new Date().toISOString()}] useFriendChatStore: Setting partner`, { partnerId, partnerName });
     set({ partnerId, partnerName, chatType: partnerId ? 'friend' : null });
   },
   setPartnerTyping: (isTyping) => set({ isPartnerTyping: isTyping }),
@@ -34,75 +34,60 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
     const userId = useUserStore.getState().user?._id;
     const username = useUserStore.getState().user?.user_name || 'Anonymous';
     if (!userId || !friendId || !socket?.connected) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Invalid startFriendChat params`, {
-        userId,
-        friendId,
-        socketConnected: socket?.connected,
-      });
       Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid user or friend ID.' });
       return;
     }
-    console.log(`[${new Date().toISOString()}] useFriendChatStore: Emitting start_friend_chat`, {
-      userId,
-      friendId,
-      socketId: socket?.id,
-    });
+
+    // Wait for server to confirm the room is ready before marking chat as initialized
+    let started = false;
+    const handleStarted = () => {
+      if (started) return;
+      started = true;
+      socket.off('friend_chat_started', handleStarted);
+      onStarted();
+    };
+    socket.off('friend_chat_started'); // Remove stale listener
+    socket.on('friend_chat_started', handleStarted);
+
     socket.emit('start_friend_chat', { userId, friendId, username });
-    onStarted();
+
+    // Fallback: if server doesn't respond within 3s, proceed anyway
+    setTimeout(handleStarted, 3000);
   },
   emitTyping: (socket) => {
     const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
     if (socket?.connected && partnerId && userId) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Emitting typing`, {
-        toUserId: partnerId,
-        fromUserId: userId,
-        socketId: socket?.id,
-      });
       socket.emit('typing', { toUserId: partnerId, fromUserId: userId });
     }
   },
-  emitMessageSeen: (socket, timestamp) => {
+  emitStopTyping: (socket) => {
     const userId = useUserStore.getState().user?._id;
     const partnerId = get().partnerId;
     if (socket?.connected && partnerId && userId) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Emitting message_seen`, {
-        toUserId: partnerId,
-        fromUserId: userId,
-        timestamp,
-        socketId: socket?.id,
-      });
-      socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp });
+      socket.emit('stop_typing', { toUserId: partnerId, fromUserId: userId });
+    }
+  },
+  emitMessageSeen: (socket, timestamp, messageId?) => {
+    const userId = useUserStore.getState().user?._id;
+    const partnerId = get().partnerId;
+    if (socket?.connected && partnerId && userId) {
+      socket.emit('message_seen', { toUserId: partnerId, fromUserId: userId, timestamp, messageId });
     }
   },
   fetchChatHistory: async (friendId) => {
     const userId = useUserStore.getState().user?._id;
-    if (!userId || !friendId) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Invalid fetchChatHistory params`, {
-        userId,
-        friendId,
-      });
-      return [];
-    }
+    if (!userId || !friendId) return [];
     try {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Fetching chat history`, { userId, friendId });
-      const response = await api.get(`/api/chats/${userId}/${friendId}`);
-      const messages = response.data.messages.map((msg: any) => ({
-        messageId: msg._id, // Use server-provided ID
+      const response = await api.get(`/api/chats/${friendId}`);
+      return response.data.messages.map((msg: any) => ({
+        messageId: msg._id,
         text: msg.text,
         sender: msg.senderId === userId ? 'user' : 'friend',
         timestamp: new Date(msg.timestamp).getTime(),
         seen: msg.seen,
       }));
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Chat history fetched`, {
-        messageCount: messages.length,
-        messages: messages.map((m: any) => ({ messageId: m.messageId, text: m.text, timestamp: m.timestamp })),
-      });
-      return messages;
     } catch (error: any) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Error fetching chat history`, {
-        error: error.response?.data?.message || error.message,
-      });
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to load chat history.' });
       return [];
     }
@@ -110,49 +95,56 @@ const useFriendChatStore = create<FriendChatStore>((set, get) => ({
   sendMessage: async (friendId, message) => {
     const userId = useUserStore.getState().user?._id;
     if (!userId || !friendId || !message.trim()) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Invalid sendMessage params`, {
-        userId,
-        friendId,
-        message,
-      });
       Toast.show({ type: 'error', text1: 'Error', text2: 'Invalid input or user.' });
-      return;
+      return null;
     }
     try {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Sending message`, { userId, friendId, message });
-      await api.post('/api/chats/send', { userId, friendId, message });
+      const response = await api.post('/api/chats/send', { userId, friendId, message });
+      const data = response.data;
+      const msg = data.message || data;
+      const msgId = msg?._id || msg?.messageId || msg?.id;
+      const msgTimestamp = msg?.timestamp
+        ? new Date(msg.timestamp).getTime()
+        : msg?.createdAt
+        ? new Date(msg.createdAt).getTime()
+        : null;
+      if (msgId) {
+        return { messageId: msgId, timestamp: msgTimestamp || Date.now() };
+      }
+      return null;
     } catch (error: any) {
-      console.log(`[${new Date().toISOString()}] useFriendChatStore: Error sending message`, {
-        error: error.response?.data?.message || error.message,
-      });
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to send message.' });
       throw error;
     }
   },
   reset: () => {
-    console.log(`[${new Date().toISOString()}] useFriendChatStore: Resetting store`);
     set({ partnerId: null, partnerName: null, isPartnerTyping: false, chatType: null });
   },
   initializeListeners: (socket) => {
     const handlePartnerTyping = ({ fromUserId }: { fromUserId: string }) => {
       if (fromUserId === get().partnerId) {
-        console.log(`[${new Date().toISOString()}] useFriendChatStore: Partner typing`, { fromUserId });
         set({ isPartnerTyping: true });
+      }
+    };
+    const handlePartnerStopTyping = ({ fromUserId }: { fromUserId: string }) => {
+      if (fromUserId === get().partnerId) {
+        set({ isPartnerTyping: false });
       }
     };
     const handleFriendRemoved = ({ removedUserId }: { removedUserId: string }) => {
       if (removedUserId === get().partnerId) {
-        console.log(`[${new Date().toISOString()}] useFriendChatStore: Friend removed`, { removedUserId });
         Toast.show({ type: 'info', text1: 'Friend Removed', text2: 'This friend has been removed.' });
         get().reset();
       }
     };
 
     socket.on('partner_typing', handlePartnerTyping);
+    socket.on('partner_stop_typing', handlePartnerStopTyping);
     socket.on('friend_removed', handleFriendRemoved);
 
     return () => {
       socket.off('partner_typing', handlePartnerTyping);
+      socket.off('partner_stop_typing', handlePartnerStopTyping);
       socket.off('friend_removed', handleFriendRemoved);
     };
   },

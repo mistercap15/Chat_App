@@ -1,1 +1,1 @@
-export const BASE_URL = "https://chatbackend-production-0a5f.up.railway.app"
+export const BASE_URL = "http://192.168.1.110:3000";

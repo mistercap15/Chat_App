@@ -13,9 +13,9 @@ interface FriendRequestStore {
 
 const useFriendRequestStore = create<FriendRequestStore>((set) => ({
   pendingRequests: [],
-  fetchPendingRequests: async (userId) => {
+  fetchPendingRequests: async (_userId) => {
     try {
-      const response = await api.get(`/api/users/pending-friend-requests/${userId}`);
+      const response = await api.get('/api/users/me/friend-requests');
       set({ pendingRequests: response.data.friendRequests || [] });
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch pending friend requests.' });
@@ -25,7 +25,7 @@ const useFriendRequestStore = create<FriendRequestStore>((set) => ({
     const userId = useUserStore.getState().user?._id;
     if (!userId || !friendId) return;
     try {
-      await api.post('/api/users/send-friend-request', { userId, friendId });
+      await api.post('/api/users/friend-request/send', { friendId });
       Toast.show({ type: 'success', text1: 'Request Sent', text2: 'Friend request sent!' });
     } catch (error: any) {
       Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.message || 'Failed to send friend request.' });
@@ -37,7 +37,7 @@ const useFriendRequestStore = create<FriendRequestStore>((set) => ({
     const user = useUserStore.getState().user;
     if (!userId || !friendId || !user) return;
     try {
-      await api.post('/api/users/accept-friend-request', { userId, friendId });
+      await api.post('/api/users/friend-request/accept', { friendId });
       setUser({ ...user, friends: user.friends ? [...user.friends, friendId] : [friendId] });
       set(({ pendingRequests }) => ({
         pendingRequests: pendingRequests.filter((req) => req.fromUserId !== friendId),
@@ -51,7 +51,7 @@ const useFriendRequestStore = create<FriendRequestStore>((set) => ({
     const userId = useUserStore.getState().user?._id;
     if (!userId || !friendId) return;
     try {
-      await api.post('/api/users/reject-friend-request', { userId, friendId });
+      await api.post('/api/users/friend-request/reject', { friendId });
       set(({ pendingRequests }) => ({
         pendingRequests: pendingRequests.filter((req) => req.fromUserId !== friendId),
       }));

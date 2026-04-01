@@ -9,10 +9,13 @@ import {
   Platform,
   Modal,
   BackHandler,
+  Animated,
+  Easing,
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import moment from "moment";
 import { Ionicons } from "@expo/vector-icons";
+import { UserPlus, LogOut, Shuffle, X, Check, Send, ChevronLeft, MoreVertical, ChevronDown, ChevronUp } from "lucide-react-native";
 import { router } from "expo-router";
 import Toast from "react-native-toast-message";
 import useSocketStore from "@/store/useSocketStore";
@@ -29,6 +32,56 @@ interface Message {
   type?: "friendRequestSent" | "friendRequestReceived" | "system";
 }
 
+const TypingDots = () => {
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animate = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.delay(600 - delay),
+        ])
+      );
+    animate(dot1, 0).start();
+    animate(dot2, 200).start();
+    animate(dot3, 400).start();
+  }, []);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 4 }}>
+      <View style={{
+        backgroundColor: '#1E1E45',
+        borderRadius: 16,
+        borderTopLeftRadius: 4,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+      }}>
+        {[dot1, dot2, dot3].map((dot, i) => (
+          <Animated.View
+            key={i}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: '#7C3AED',
+              opacity: dot.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+              transform: [{ translateY: dot.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) }],
+            }}
+          />
+        ))}
+      </View>
+    </View>
+  );
+};
+
 const Chat = () => {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -36,7 +89,7 @@ const Chat = () => {
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastDisconnectTime, setLastDisconnectTime] = useState<number | null>(null);
-  const [isPartnerInfoVisible, setIsPartnerInfoVisible] = useState(true);
+  const [isPartnerInfoVisible, setIsPartnerInfoVisible] = useState(false);
   const [showExtraButtons, setShowExtraButtons] = useState(false);
   const [chatEnded, setChatEnded] = useState(false);
   const [partnerBio, setPartnerBio] = useState<string | null>(null);
@@ -57,10 +110,13 @@ const Chat = () => {
     friendRequestAccepted,
     setPartnerTyping,
     emitTyping,
+    emitStopTyping,
     emitMessageSeen,
     friendRequest,
     friendRequestSent,
     emitFriendRequestSent,
+    clearFriendRequest,
+    clearFriendRequestSent,
     reset,
     setFriendRequestAccepted,
     initializeListeners,
@@ -76,13 +132,10 @@ const Chat = () => {
 
     const fetchPartnerBio = async () => {
       try {
-        log("Fetching partner bio", { partnerId });
         const response = await api.get(`/api/users/${partnerId}`);
-        const { bio, gender } = response.data;
+        const { bio } = response.data;
         setPartnerBio(bio || "No bio available");
-        log("Partner bio fetched", { bio, gender });
       } catch (error: any) {
-        log("Error fetching partner bio", { error: error.message });
         setPartnerBio("No bio available");
       }
     };
@@ -131,21 +184,13 @@ const Chat = () => {
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
       if (isInitialMount.current) {
-        log("Skipping beforeRemove on initial mount");
         isInitialMount.current = false;
         return;
       }
       if (!isMounted.current || chatEnded || friendRequestAccepted || isIntentionallyLeaving.current) {
-        log("Navigation allowed", {
-          chatEnded,
-          friendRequestAccepted,
-          isIntentionallyLeaving: isIntentionallyLeaving.current,
-          action: e.data.action,
-        });
         return;
       }
       e.preventDefault();
-      log("Navigation blocked, showing leave confirmation", { action: e.data.action });
       setLeaveConfirmVisible(true);
     });
 
@@ -153,17 +198,11 @@ const Chat = () => {
   }, [navigation, chatEnded, friendRequestAccepted]);
 
   useEffect(() => {
-    log("Chat component mounted");
     isMounted.current = true;
     isInitialMount.current = true;
     const cleanup = initializeListeners(socket);
 
-    socket?.onAnyOutgoing((event: any, ...args: any) => {
-      log(`Outgoing socket event: ${event}`, args);
-    });
-
     const chatReadyListener = () => {
-      log("Chat ready confirmed");
       isChatInitialized.current = true;
       isInitialMount.current = false;
     };
@@ -171,7 +210,6 @@ const Chat = () => {
     socket?.on("chat_ready", chatReadyListener);
 
     return () => {
-      log("Chat component unmounted");
       isMounted.current = false;
       isInitialMount.current = false;
       cleanup();
@@ -182,7 +220,6 @@ const Chat = () => {
 
   useEffect(() => {
     if (friendRequestAccepted) {
-      log("Friend request accepted, navigating to friends list");
       navigateToFriends(true);
       setFriendRequestAccepted(false);
     }
@@ -191,30 +228,17 @@ const Chat = () => {
   useFocusEffect(
     useCallback(() => {
       if (!partnerId || !partnerName || !user?._id || !socket?.connected) {
-        if (friendRequestAccepted) {
-          log("Friend request accepted, skipping home navigation");
-          return;
-        }
-        log("Invalid chat state, navigating to home", {
-          partnerId,
-          partnerName,
-          userId: user?._id,
-          socketConnected: socket?.connected,
-        });
+        if (friendRequestAccepted) return;
         navigateToHome(true);
         return;
       }
 
-      if (!hasJoinedRoom.current) {
-        const roomId = [user._id, partnerId].sort().join("-");
-        log("Joining room", { roomId, userId: user._id, partnerId });
-        socket.emit("join_room", { roomId, userId: user._id });
-        hasJoinedRoom.current = true;
-      }
+      // Room joining is handled server-side by the match logic.
+      // No need to emit join_room — the backend has no handler for it.
+      hasJoinedRoom.current = true;
 
       return () => {
         if (isIntentionallyLeaving.current && !leaveConfirmVisible && socket?.connected && partnerId && !chatEnded) {
-          log("Leaving chat room", { partnerId });
           socket.emit("leave_chat", { toUserId: partnerId });
         }
       };
@@ -234,58 +258,35 @@ const Chat = () => {
       timestamp: number;
     }) => {
       if (!isMounted.current) return;
-      log("Received message event", { message, fromUserId, timestamp, partnerId, chatEnded });
       if (fromUserId === partnerId && isChatInitialized.current) {
         setMessages((prev): any => {
           const recentMessages = prev.filter((msg) => Math.abs(msg.timestamp - timestamp) < DEDUPE_WINDOW);
           if (recentMessages.some((msg) => msg.text === message && msg.sender === "partner")) {
-            log("Duplicate message ignored", { message, timestamp });
             return prev;
           }
           const newMessage = { text: message, sender: "partner", timestamp, seen: false };
-          log("Adding message to state", newMessage);
           flatListRef.current?.scrollToEnd({ animated: true });
           return [...prev, newMessage];
         });
         emitMessageSeen(socket, timestamp);
-      } else {
-        log("Message ignored", { reason: fromUserId === partnerId ? "Not initialized" : "Invalid sender", fromUserId });
       }
     };
 
     const partnerDisconnectedListener = ({ disconnectedUserId }: { disconnectedUserId: string }) => {
-      if (!isMounted.current || disconnectedUserId !== partnerId || !isChatInitialized.current || chatEnded) {
-        log("Ignoring partner_disconnected event", {
-          disconnectedUserId,
-          partnerId,
-          isChatInitialized: isChatInitialized.current,
-          chatEnded,
-        });
-        return;
-      }
+      if (!isMounted.current || disconnectedUserId !== partnerId || !isChatInitialized.current || chatEnded) return;
       const now = Date.now();
-      if (lastDisconnectTime && now - lastDisconnectTime < DISCONNECT_GRACE_PERIOD) {
-        log("Ignoring duplicate disconnect event", { disconnectedUserId, lastDisconnectTime });
-        return;
-      }
-      log("Partner disconnected", { disconnectedUserId });
+      if (lastDisconnectTime && now - lastDisconnectTime < DISCONNECT_GRACE_PERIOD) return;
       setLastDisconnectTime(now);
       setChatEnded(true);
       setMessages((prev) => [
         ...prev,
-        {
-          text: "User has disconnected",
-          sender: "system",
-          timestamp: Date.now(),
-          type: "system",
-        },
+        { text: "Partner has left the chat", sender: "system", timestamp: Date.now(), type: "system" },
       ]);
       flatListRef.current?.scrollToEnd({ animated: true });
     };
 
     const messageSeenListener = ({ fromUserId, timestamp }: { fromUserId: string; timestamp: number }) => {
       if (!isMounted.current || fromUserId !== partnerId) return;
-      log("Message seen", { fromUserId, timestamp });
       setMessages((prev) =>
         prev.map((msg) => (msg.sender === "user" && msg.timestamp === timestamp ? { ...msg, seen: true } : msg))
       );
@@ -311,16 +312,12 @@ const Chat = () => {
 
   useEffect(() => {
     if (friendRequest && isMounted.current && isChatInitialized.current && !chatEnded) {
-      log("Friend request received, adding to messages", { friendRequest });
       setMessages((prev) => {
-        if (prev.some((msg) => msg.type === "friendRequestReceived" && msg.sender === "partner")) {
-          log("Duplicate friend request message ignored");
-          return prev;
-        }
+        if (prev.some((msg) => msg.type === "friendRequestReceived" && msg.sender === "partner")) return prev;
         return [
           ...prev,
           {
-            text: `${friendRequest.fromUsername} sent you a friend request!`,
+            text: `${friendRequest.fromUsername} wants to be friends!`,
             sender: "partner",
             timestamp: Date.now(),
             type: "friendRequestReceived",
@@ -350,23 +347,20 @@ const Chat = () => {
       setLastTypingTime(currentTime);
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => setLastTypingTime(null), TYPING_TIMEOUT);
-  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, chatEnded]);
+    typingTimeoutRef.current = setTimeout(() => {
+      setLastTypingTime(null);
+      emitStopTyping(socket);
+    }, TYPING_TIMEOUT);
+  }, [socket, partnerId, user?._id, lastTypingTime, emitTyping, emitStopTyping, chatEnded]);
 
-  const sendMessage = async () => {
-    if (isSending || chatEnded || !isChatInitialized.current) {
-      log("Send message blocked", { isSending, chatEnded, isChatInitialized: isChatInitialized.current });
-      Toast.show({ type: "error", text1: "Error", text2: "Cannot send message." });
-      return;
-    }
+  const sendMessageHandler = async () => {
+    if (isSending || chatEnded || !isChatInitialized.current) return;
     setIsSending(true);
     if (!input.trim()) {
-      Toast.show({ type: "error", text1: "Error", text2: "Message cannot be empty." });
       setIsSending(false);
       return;
     }
     if (!user?._id || !partnerId || !socket?.connected) {
-      log("Invalid state for sending message", { userId: user?._id, partnerId, socketConnected: socket?.connected });
       Toast.show({ type: "error", text1: "Error", text2: "Chat is not properly initialized." });
       setIsSending(false);
       return;
@@ -378,10 +372,8 @@ const Chat = () => {
     flatListRef.current?.scrollToEnd({ animated: true });
 
     try {
-      log("Emitting send_message", { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
       socket.emit("send_message", { toUserId: partnerId, message: input, fromUserId: user._id, timestamp });
     } catch (error: any) {
-      log("Error sending message", { error: error.message });
       setMessages((prev) => prev.filter((msg) => msg.timestamp !== timestamp));
       Toast.show({ type: "error", text1: "Error", text2: "Failed to send message." });
     } finally {
@@ -395,14 +387,9 @@ const Chat = () => {
     emitFriendRequestSent(socket);
     setMessages((prev) => [
       ...prev,
-      {
-        text: "Friend request sent!",
-        sender: "user",
-        timestamp: Date.now(),
-        seen: false,
-        type: "friendRequestSent",
-      },
+      { text: "Friend request sent!", sender: "user", timestamp: Date.now(), seen: false, type: "friendRequestSent" },
     ]);
+    setShowExtraButtons(false);
   };
 
   const handleAcceptFriendRequest = async (timestamp: number) => {
@@ -415,19 +402,14 @@ const Chat = () => {
     if (!user?._id || !partnerId) return;
     try {
       await rejectFriendRequest(partnerId);
-      // Remove the friend request message instead of updating it
       setMessages((prev) =>
         prev.filter((msg) => !(msg.type === "friendRequestReceived" && msg.timestamp === timestamp))
       );
-      // Notify both users of the rejection
-      socket?.emit("friend_request_rejected", {
-        fromUserId: partnerId,
-        toUserId: user._id,
-      });
-      log("Friend request rejected and notification emitted", { partnerId, timestamp });
-      Toast.show({ type: "success", text1: "Request Rejected", text2: "Friend request rejected." });
+      clearFriendRequest();
+      clearFriendRequestSent();
+      socket?.emit("friend_request_rejected", { fromUserId: partnerId, toUserId: user._id });
+      Toast.show({ type: "success", text1: "Rejected", text2: "Friend request rejected." });
     } catch (error: any) {
-      log("Error rejecting friend request", { error: error.message });
       Toast.show({ type: "error", text1: "Error", text2: "Failed to reject friend request." });
     }
   };
@@ -436,18 +418,12 @@ const Chat = () => {
     if (!isMounted.current || chatEnded) return;
     isIntentionallyLeaving.current = true;
     if (socket?.connected && partnerId) {
-      log("Emitting leave_chat", { toUserId: partnerId });
       socket.emit("leave_chat", { toUserId: partnerId });
     }
     setChatEnded(true);
     setMessages((prev) => [
       ...prev,
-      {
-        text: "You have left the chat",
-        sender: "system",
-        timestamp: Date.now(),
-        type: "system",
-      },
+      { text: "You left the chat", sender: "system", timestamp: Date.now(), type: "system" },
     ]);
     setLeaveConfirmVisible(false);
     flatListRef.current?.scrollToEnd({ animated: true });
@@ -455,7 +431,6 @@ const Chat = () => {
   }, [socket, partnerId, navigateToHome]);
 
   const handleCancelLeave = useCallback(() => {
-    log("Leave confirmation cancelled");
     setLeaveConfirmVisible(false);
   }, []);
 
@@ -467,191 +442,405 @@ const Chat = () => {
     setShowExtraButtons((prev) => !prev);
   };
 
+  const getPartnerInitial = () => {
+    return (partnerName || "A").charAt(0).toUpperCase();
+  };
+
+  const isSendFriendRequestDisabled: boolean =
+    !partnerId ||
+    connectionStatus === "disconnected" ||
+    chatEnded ||
+    !!(friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId)) ||
+    !!(friendRequest && friendRequest.fromUserId === partnerId);
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isUser = item.sender === "user";
     const isSystem = item.sender === "system";
+    const showTimestamp = index === messages.length - 1 ||
+      messages[index + 1]?.sender !== item.sender ||
+      (messages[index + 1]?.timestamp - item.timestamp > 60000);
+
     if (isSystem || item.type === "friendRequestSent") {
       return (
-        <View className="my-2 self-center bg-[#2E2E4D] rounded-lg px-4 py-2">
-          <Text className="text-gray-300 text-sm">{item.text}</Text>
+        <View style={{
+          alignSelf: 'center',
+          marginVertical: 8,
+          backgroundColor: item.type === "friendRequestSent" ? 'rgba(124, 58, 237, 0.15)' : 'rgba(255, 255, 255, 0.06)',
+          borderRadius: 20,
+          paddingHorizontal: 16,
+          paddingVertical: 6,
+        }}>
+          <Text style={{ color: item.type === "friendRequestSent" ? '#A78BFA' : '#8888AA', fontSize: 12, fontWeight: '500' }}>
+            {item.text}
+          </Text>
         </View>
       );
     }
+
     if (item.type === "friendRequestReceived") {
       return (
-        <View className="my-2 self-center bg-[#2E2E4D] rounded-lg px-4 py-2">
-          <Text className="text-gray-300 text-sm mb-2">{item.text}</Text>
-          <View className="flex-row justify-center gap-3">
+        <View style={{
+          alignSelf: 'center',
+          marginVertical: 8,
+          backgroundColor: 'rgba(124, 58, 237, 0.1)',
+          borderRadius: 16,
+          paddingHorizontal: 20,
+          paddingVertical: 12,
+          borderWidth: 1,
+          borderColor: 'rgba(124, 58, 237, 0.2)',
+          maxWidth: '85%',
+        }}>
+          <Text style={{ color: '#D4BFFF', fontSize: 13, textAlign: 'center', marginBottom: 10, fontWeight: '500' }}>
+            {item.text}
+          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
             <TouchableOpacity
               onPress={() => handleAcceptFriendRequest(item.timestamp)}
-              className="bg-indigo-600 px-4 py-2 rounded-xl shadow-sm active:scale-95"
               disabled={chatEnded}
+              activeOpacity={0.7}
+              style={{
+                backgroundColor: '#7C3AED',
+                paddingHorizontal: 20,
+                paddingVertical: 8,
+                borderRadius: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
             >
-              <Text className="text-white text-sm font-semibold">Accept</Text>
+              <Check size={14} color="white" />
+              <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Accept</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleRejectFriendRequest(item.timestamp)}
-              className="bg-red-600 px-4 py-2 rounded-xl shadow-sm active:scale-95"
               disabled={chatEnded}
+              activeOpacity={0.7}
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                paddingHorizontal: 20,
+                paddingVertical: 8,
+                borderRadius: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
             >
-              <Text className="text-white text-sm font-semibold">Reject</Text>
+              <X size={14} color="#EF4444" />
+              <Text style={{ color: '#EF4444', fontSize: 13, fontWeight: '600' }}>Decline</Text>
             </TouchableOpacity>
           </View>
         </View>
       );
     }
+
     return (
-      <View className={`my-2 max-w-[75%] ${isUser ? "self-end" : "self-start"}`}>
-        <View className={`px-4 py-3 rounded-2xl shadow-sm ${isUser ? "bg-indigo-600" : "bg-[#2E2E4D]"}`}>
-          <Text className="text-white text-base leading-5">{item.text}</Text>
+      <View style={{
+        alignSelf: isUser ? 'flex-end' : 'flex-start',
+        maxWidth: '78%',
+        marginVertical: 2,
+        marginHorizontal: 4,
+      }}>
+        <View style={{
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: 18,
+          borderTopRightRadius: isUser ? 4 : 18,
+          borderTopLeftRadius: isUser ? 18 : 4,
+          backgroundColor: isUser ? '#7C3AED' : '#1E1E45',
+        }}>
+          <Text style={{ color: 'white', fontSize: 15, lineHeight: 20 }}>{item.text}</Text>
         </View>
-        <View className="flex-row justify-between mt-1">
-          <Text className="text-xs text-gray-400">{moment(item.timestamp).format("h:mm A")}</Text>
-          {isUser && item.seen && <Text className="text-xs text-green-400">Seen</Text>}
-        </View>
+        {showTimestamp && (
+          <View style={{
+            flexDirection: 'row',
+            justifyContent: isUser ? 'flex-end' : 'flex-start',
+            alignItems: 'center',
+            marginTop: 3,
+            paddingHorizontal: 4,
+            gap: 6,
+          }}>
+            <Text style={{ fontSize: 11, color: '#64648F' }}>
+              {moment(item.timestamp).format("h:mm A")}
+            </Text>
+            {isUser && (
+              <Ionicons
+                name={item.seen ? "checkmark-done" : "checkmark"}
+                size={14}
+                color={item.seen ? "#7C3AED" : "#64648F"}
+              />
+            )}
+          </View>
+        )}
       </View>
     );
   };
 
-  const isSendFriendRequestDisabled:any =
-    !partnerId ||
-    connectionStatus === "disconnected" ||
-    chatEnded ||
-    (friendRequestSent && (friendRequestSent.fromUserId === user?._id || friendRequestSent.fromUserId === partnerId)) ||
-    (friendRequest && friendRequest.fromUserId === partnerId);
-
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <View className="flex-1 bg-[#1C1C3A] px-4 pt-10">
-        <View className="flex-row items-center justify-between mb-4">
-          <TouchableOpacity onPress={() => setLeaveConfirmVisible(true)}>
-            <Ionicons name="chevron-back" size={28} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
+      <View style={{ flex: 1, backgroundColor: '#0F0F2D' }}>
+        {/* Header */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingTop: 8,
+          paddingBottom: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: 'rgba(124, 58, 237, 0.1)',
+        }}>
+          <TouchableOpacity
+            onPress={() => chatEnded ? navigateToHome(true) : setLeaveConfirmVisible(true)}
+            style={{ padding: 4 }}
+          >
+            <ChevronLeft size={24} color={chatEnded ? "#64648F" : "#7C3AED"} />
           </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">{partnerName || "Anonymous"}</Text>
-          <TouchableOpacity onPress={toggleExtraButtons} disabled={chatEnded}>
-            <Ionicons
-              name="ellipsis-vertical"
-              size={24}
-              color={showExtraButtons && !chatEnded ? "#5B2EFF" : "#A0A0A0"}
-            />
+          <TouchableOpacity
+            onPress={() => setIsPartnerInfoVisible(!isPartnerInfoVisible)}
+            disabled={chatEnded}
+            activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center' }}
+          >
+            <View style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              backgroundColor: 'rgba(124, 58, 237, 0.2)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 10,
+            }}>
+              <Text style={{ color: '#7C3AED', fontSize: 14, fontWeight: '700' }}>{getPartnerInitial()}</Text>
+            </View>
+            <View>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{partnerName || "Anonymous"}</Text>
+              <Text style={{ color: chatEnded ? '#EF4444' : '#22C55E', fontSize: 11 }}>
+                {chatEnded ? 'Disconnected' : 'Online'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={toggleExtraButtons} disabled={chatEnded} style={{ padding: 4 }}>
+            <MoreVertical size={20} color={showExtraButtons && !chatEnded ? "#7C3AED" : "#64648F"} />
           </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={() => setIsPartnerInfoVisible(!isPartnerInfoVisible)}
-          className="self-center bg-[#2E2E4D] rounded-lg px-4 py-2 my-2 flex-row items-center"
-          disabled={chatEnded}
-        >
-          <Text className="text-white text-sm font-semibold">About partner</Text>
-          <Ionicons
-            name={isPartnerInfoVisible ? "chevron-up" : "chevron-down"}
-            size={16}
-            color="#A0A0A0"
-            className="ml-2"
-          />
-        </TouchableOpacity>
+
+        {/* Partner Bio */}
         {isPartnerInfoVisible && (
-          <View className="self-center bg-[#2E2E4D] rounded-lg px-4 py-2 mb-4">
-            <Text className="text-gray-300 text-sm">{partnerBio || "Loading..."}</Text>
+          <View style={{
+            marginHorizontal: 16,
+            marginTop: 8,
+            backgroundColor: 'rgba(124, 58, 237, 0.06)',
+            borderRadius: 12,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: 'rgba(124, 58, 237, 0.1)',
+          }}>
+            <Text style={{ color: '#A78BFA', fontSize: 11, fontWeight: '600', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>About</Text>
+            <Text style={{ color: '#C4C4E0', fontSize: 13, lineHeight: 18 }}>{partnerBio || "Loading..."}</Text>
           </View>
         )}
+
+        {/* Action Buttons (Dropdown) */}
+        {showExtraButtons && (
+          <View style={{
+            marginHorizontal: 16,
+            marginTop: 8,
+            backgroundColor: '#161638',
+            borderRadius: 12,
+            padding: 4,
+            borderWidth: 1,
+            borderColor: 'rgba(124, 58, 237, 0.15)',
+          }}>
+            <TouchableOpacity
+              onPress={handleSendFriendRequest}
+              disabled={isSendFriendRequestDisabled}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 12,
+                borderRadius: 8,
+                opacity: isSendFriendRequestDisabled ? 0.4 : 1,
+              }}
+            >
+              <UserPlus size={18} color="#7C3AED" />
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '500', marginLeft: 12 }}>Add Friend</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: 'rgba(124, 58, 237, 0.1)', marginHorizontal: 8 }} />
+            <TouchableOpacity
+              onPress={handleNewPartner}
+              disabled={chatEnded}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 12,
+                borderRadius: 8,
+                opacity: chatEnded ? 0.4 : 1,
+              }}
+            >
+              <Shuffle size={18} color="#7C3AED" />
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '500', marginLeft: 12 }}>New Partner</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: 'rgba(124, 58, 237, 0.1)', marginHorizontal: 8 }} />
+            <TouchableOpacity
+              onPress={() => { setShowExtraButtons(false); setLeaveConfirmVisible(true); }}
+              disabled={chatEnded}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 12,
+                borderRadius: 8,
+                opacity: chatEnded ? 0.4 : 1,
+              }}
+            >
+              <LogOut size={18} color="#EF4444" />
+              <Text style={{ color: '#EF4444', fontSize: 14, fontWeight: '500', marginLeft: 12 }}>End Chat</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Messages */}
         <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item, index) => `${item.timestamp}-${index}`}
           renderItem={renderMessage}
-          className="flex-1"
-          contentContainerStyle={{ paddingBottom: 150 }}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingVertical: 8, paddingHorizontal: 12 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          ListEmptyComponent={
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
+              <Ionicons name="chatbubbles-outline" size={48} color="#2A2A5A" />
+              <Text style={{ color: '#64648F', fontSize: 14, marginTop: 12 }}>Say hello to start the conversation!</Text>
+            </View>
+          }
         />
-        {isPartnerTyping && !chatEnded && (
-          <View className="px-4 pb-2">
-            <Text className="text-white text-sm">...</Text>
-            <Text className="text-gray-400 text-xs">typing</Text>
-          </View>
-        )}
-        <View className="mb-4">
-          <View className="flex-row items-center bg-[#2E2E4D] rounded-full p-2 shadow-sm">
-            <TouchableOpacity className="p-2" disabled={chatEnded}>
-              <Ionicons name="camera-outline" size={24} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
-            </TouchableOpacity>
+
+        {/* Typing Indicator */}
+        {isPartnerTyping && !chatEnded && <TypingDots />}
+
+        {/* Input Area */}
+        <View style={{
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          paddingBottom: Platform.OS === 'ios' ? 4 : 8,
+        }}>
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#161638',
+            borderRadius: 24,
+            paddingHorizontal: 6,
+            paddingVertical: 4,
+            borderWidth: 1,
+            borderColor: input.trim() ? 'rgba(124, 58, 237, 0.3)' : 'rgba(124, 58, 237, 0.08)',
+          }}>
             <TextInput
               value={input}
               onChangeText={(text) => {
                 setInput(text);
                 handleTyping();
               }}
-              placeholder="Write a message..."
-              placeholderTextColor="#A0A0A0"
-              className="flex-1 text-white px-3 text-base"
+              placeholder="Type a message..."
+              placeholderTextColor="#64648F"
+              style={{
+                flex: 1,
+                color: 'white',
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+                fontSize: 15,
+              }}
               editable={connectionStatus !== "disconnected" && !chatEnded}
+              multiline
+              maxLength={1000}
             />
             <TouchableOpacity
-              onPress={sendMessage}
+              onPress={sendMessageHandler}
               disabled={isSending || connectionStatus === "disconnected" || !input.trim() || chatEnded}
-              className={`p-2 ${
-                isSending || connectionStatus === "disconnected" || !input.trim() || chatEnded ? "opacity-50" : ""
-              }`}
+              activeOpacity={0.7}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: input.trim() && !chatEnded ? '#7C3AED' : 'rgba(124, 58, 237, 0.15)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
             >
-              <Ionicons name="send" size={24} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} />
+              <Send size={17} color={input.trim() && !chatEnded ? 'white' : '#64648F'} />
             </TouchableOpacity>
           </View>
-          {showExtraButtons && (
-            <View className="mt-3 gap-2">
-              <TouchableOpacity
-                onPress={handleSendFriendRequest}
-                disabled={isSendFriendRequestDisabled}
-                className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  isSendFriendRequestDisabled ? "bg-gray-600 opacity-50" : "bg-indigo-600"
-                }`}
-              >
-                <Ionicons name="person-add-outline" size={20} color="white" className="mr-2" />
-                <Text className="text-white text-base font-semibold">Send Friend Request</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setLeaveConfirmVisible(true)}
-                disabled={chatEnded}
-                className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  chatEnded ? "bg-gray-600 opacity-50" : "bg-red-600"
-                }`}
-              >
-                <Ionicons name="close-circle-outline" size={20} color="white" className="mr-2" />
-                <Text className="text-white text-base font-semibold">End Chat</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleNewPartner}
-                disabled={chatEnded}
-                className={`flex-row items-center justify-center py-3 rounded-xl shadow-sm active:scale-95 ${
-                  chatEnded ? "bg-gray-600 opacity-50" : "bg-[#2E2E4D]"
-                }`}
-              >
-                <Ionicons name="refresh-outline" size={20} color={chatEnded ? "#A0A0A0" : "#5B2EFF"} className="mr-2" />
-                <Text className="text-white text-base font-semibold">New Partner</Text>
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
+
+        {/* Leave Confirmation Modal */}
         <Modal
           visible={leaveConfirmVisible}
           transparent
           animationType="fade"
           onRequestClose={handleCancelLeave}
         >
-          <View className="flex-1 justify-center items-center bg-black/50 px-6">
-            <View className="bg-[#2E2E4D] rounded-xl p-6 w-full max-w-md shadow-lg">
-              <Text className="text-white text-lg font-semibold mb-3">End Chat?</Text>
-              <Text className="text-gray-300 mb-5">Leaving will disconnect you from this chat. Are you sure?</Text>
-              <View className="flex-row justify-end gap-3">
+          <View style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            paddingHorizontal: 32,
+          }}>
+            <View style={{
+              backgroundColor: '#161638',
+              borderRadius: 20,
+              padding: 24,
+              width: '100%',
+              maxWidth: 340,
+              borderWidth: 1,
+              borderColor: 'rgba(124, 58, 237, 0.15)',
+            }}>
+              <View style={{
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                alignSelf: 'center',
+                marginBottom: 16,
+              }}>
+                <LogOut size={22} color="#EF4444" />
+              </View>
+              <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+                Leave Chat?
+              </Text>
+              <Text style={{ color: '#8888AA', fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
+                You'll be disconnected from this conversation and won't be able to return.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
                   onPress={handleCancelLeave}
-                  className="bg-gray-500 px-4 py-2 rounded-xl shadow-sm active:scale-95"
+                  activeOpacity={0.7}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  }}
                 >
-                  <Text className="text-white font-medium">Cancel</Text>
+                  <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Stay</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={handleLeaveChat}
-                  className="bg-red-600 px-4 py-2 rounded-xl shadow-sm active:scale-95"
+                  activeOpacity={0.7}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    backgroundColor: '#EF4444',
+                  }}
                 >
-                  <Text className="text-white font-medium">Leave</Text>
+                  <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Leave</Text>
                 </TouchableOpacity>
               </View>
             </View>

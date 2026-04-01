@@ -5,6 +5,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { BASE_URL } from '@/utils/constants';
 import Toast from 'react-native-toast-message';
 import useUserStore from './useUserStore';
+import useAuthStore from './useAuthStore';
 import useFriendRequestStore from './useFriendRequestStore';
 
 interface SocketStore {
@@ -37,8 +38,10 @@ const useSocketStore = create<SocketStore>((set, get) => {
 
     set({ connectionStatus: 'connecting', isConnecting: true });
     const user = useUserStore.getState().user;
+    const token = useAuthStore.getState().token;
     const newSocket = io(BASE_URL, {
       query: { userId, username: user?.user_name || 'Anonymous' },
+      auth: token ? { token } : undefined,
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 500,
@@ -46,11 +49,27 @@ const useSocketStore = create<SocketStore>((set, get) => {
       timeout: 20000,
     });
 
+    // Global listeners that must work on every screen
+    newSocket.on('friend_request_received', ({ fromUserId, fromUsername }: any) => {
+      log('Global: friend_request_received', { fromUserId, fromUsername });
+      useFriendRequestStore.getState().fetchPendingRequests(userId);
+      Toast.show({ type: 'info', text1: 'Friend Request', text2: `${fromUsername || 'Someone'} wants to be your friend!` });
+    });
+
+    newSocket.on('friend_added', ({ friendId, friendUsername }: any) => {
+      log('Global: friend_added', { friendId, friendUsername });
+    });
+
     newSocket.on('connect', () => {
       log('Socket connected', { userId, socketId: newSocket.id });
       set({ socket: newSocket, connectionStatus: 'connected', isConnecting: false });
       newSocket.emit('set_username', { userId, username: user?.user_name || 'Anonymous' });
       useFriendRequestStore.getState().fetchPendingRequests(userId);
+    });
+
+    newSocket.on('connect_error', (err: any) => {
+      log('Socket connect_error', { userId, error: err.message });
+      set({ connectionStatus: 'disconnected', isConnecting: false });
     });
 
     newSocket.on('reconnect', (attempt:any) => {

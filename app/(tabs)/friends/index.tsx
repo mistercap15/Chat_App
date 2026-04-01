@@ -1,11 +1,13 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, Modal, RefreshControl } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { Users, UserX, MessageCircle, Clock, Check, X, UserPlus } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import useUserStore from '@/store/useUserStore';
 import useSocketStore from '@/store/useSocketStore';
+import useFriendRequestStore from '@/store/useFriendRequestStore';
 import api from '@/utils/api';
 
 interface Friend {
@@ -16,21 +18,20 @@ interface Friend {
 const Friends = () => {
   const { user } = useUserStore();
   const { socket, connectSocket } = useSocketStore();
+  const { pendingRequests, fetchPendingRequests, acceptFriendRequest, rejectFriendRequest } = useFriendRequestStore();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [isRemoveModalVisible, setRemoveModalVisible] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
   const lastFetchTimeRef = useRef<number | null>(null);
 
-  const log = (message: string, data?: any) => {
-    console.log(`[${new Date().toISOString()}] Friends: ${message}`, data || '');
-  };
-
-  const fetchFriends = useCallback(async () => {
-    if (!user?._id || loading || (lastFetchTimeRef.current && Date.now() - lastFetchTimeRef.current < 5000)) return;
+  const fetchFriends = useCallback(async (force = false) => {
+    if (!user?._id || (loading && !force)) return;
+    if (!force && lastFetchTimeRef.current && Date.now() - lastFetchTimeRef.current < 5000) return;
     setLoading(true);
     try {
-      const response = await api.get(`/api/users/friends/${user._id}`);
+      const response = await api.get('/api/users/me/friends');
       setFriends(response.data.friends || []);
       lastFetchTimeRef.current = Date.now();
     } catch (error: any) {
@@ -40,29 +41,47 @@ const Friends = () => {
     }
   }, [user?._id, loading]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    lastFetchTimeRef.current = null;
+    await fetchFriends(true);
+    if (user?._id) await fetchPendingRequests(user._id);
+    setRefreshing(false);
+  }, [fetchFriends, fetchPendingRequests, user?._id]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user?._id) return;
       connectSocket(user._id);
       fetchFriends();
+      fetchPendingRequests(user._id);
 
       const friendRemovedListener = ({ removedUserId }: { removedUserId: string }) => {
         setFriends((prev) => prev.filter((friend) => friend._id !== removedUserId));
       };
-      const friendAddedListener = ({ userId: acceptorId, friendId }: { userId: string; friendId: string }) => {
-        if (acceptorId === user._id || friendId === user._id) {
-          setTimeout(() => fetchFriends(), 500);
-        }
+      const friendAddedListener = ({ friendId: newFriendId, friendUsername }: { friendId: string; friendUsername: string }) => {
+        // Immediately add to local list, then refresh for full data
+        setFriends((prev) => {
+          if (prev.some((f) => f._id === newFriendId)) return prev;
+          return [...prev, { _id: newFriendId, user_name: friendUsername || 'Anonymous' }];
+        });
+        fetchFriends(true);
+      };
+      const friendRequestAcceptedListener = () => {
+        fetchFriends(true);
+        if (user?._id) fetchPendingRequests(user._id);
       };
 
       socket?.on('friend_removed', friendRemovedListener);
-      socket?.on('friend_request_accepted', friendAddedListener);
+      socket?.on('friend_added', friendAddedListener);
+      socket?.on('friend_request_accepted', friendRequestAcceptedListener);
 
       return () => {
         socket?.off('friend_removed', friendRemovedListener);
-        socket?.off('friend_request_accepted', friendAddedListener);
+        socket?.off('friend_added', friendAddedListener);
+        socket?.off('friend_request_accepted', friendRequestAcceptedListener);
       };
-    }, [user?._id, connectSocket, socket, fetchFriends])
+    }, [user?._id, connectSocket, socket, fetchFriends, fetchPendingRequests])
   );
 
   const handleRemoveFriend = async (friendId: string) => {
@@ -72,7 +91,7 @@ const Friends = () => {
       return;
     }
     try {
-      await api.delete(`/api/users/remove-friend/${user._id}/${friendId}`);
+      await api.delete(`/api/users/friends/${friendId}`);
       setFriends((prev) => prev.filter((friend) => friend._id !== friendId));
       socket?.emit('friend_removed', { userId: user._id, removedUserId: friendId });
       Toast.show({ type: 'success', text1: 'Friend Removed', text2: 'The friend has been removed.' });
@@ -84,56 +103,279 @@ const Friends = () => {
     }
   };
 
-  const navigateToHome = () => {
-    router.replace('/(tabs)/home');
+  const handleAcceptRequest = async (friendId: string) => {
+    await acceptFriendRequest(friendId);
+    setTimeout(() => fetchFriends(true), 500);
+  };
+
+  const handleRejectRequest = async (friendId: string) => {
+    await rejectFriendRequest(friendId);
   };
 
   const navigateToFriendChat = (friendId: string) => {
     router.push(`/friends/${friendId}`);
   };
 
-  const renderFriend = ({ item }: { item: Friend }) => (
-    <View className="flex-row items-center justify-between bg-[#2E2E4D] p-4 rounded-xl mb-3 shadow-sm">
-      <TouchableOpacity onPress={() => navigateToFriendChat(item._id)} className="flex-row items-center gap-3 flex-1">
-        <Ionicons name="person-circle-outline" size={40} color="#5B2EFF" />
-        <Text className="text-white text-lg font-medium">{item.user_name || 'Anonymous'}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => {
-          setSelectedFriend(item);
-          setRemoveModalVisible(true);
-        }}
-        className="bg-red-600 px-3 py-1 rounded-lg"
-      >
-        <Text className="text-white text-sm font-medium">Remove</Text>
-      </TouchableOpacity>
+  const getInitial = (name: string) => (name || 'A').charAt(0).toUpperCase();
+
+  const getAvatarColor = (id: string) => {
+    const colors = ['#7C3AED', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#EC4899'];
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const renderPendingRequest = ({ item }: { item: { fromUserId: string; fromUsername: string } }) => (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'rgba(124, 58, 237, 0.08)',
+      borderRadius: 14,
+      padding: 12,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: 'rgba(124, 58, 237, 0.12)',
+    }}>
+      <View style={{
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: getAvatarColor(item.fromUserId),
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 12,
+      }}>
+        <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{getInitial(item.fromUsername)}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>{item.fromUsername}</Text>
+        <Text style={{ color: '#8888AA', fontSize: 12, marginTop: 1 }}>Wants to be your friend</Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <TouchableOpacity
+          onPress={() => handleAcceptRequest(item.fromUserId)}
+          activeOpacity={0.7}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: '#7C3AED',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Check size={16} color="white" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleRejectRequest(item.fromUserId)}
+          activeOpacity={0.7}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <X size={16} color="#EF4444" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
-  return (
-    <View className="flex-1 bg-[#1C1C3A] px-4 pt-6">
-      <View className="flex-row items-center gap-2 mb-6">
-        <Ionicons name="people-outline" size={28} color="white" />
-        <Text className="text-white text-2xl font-semibold">Friends</Text>
+  const renderFriend = ({ item }: { item: Friend }) => (
+    <TouchableOpacity
+      onPress={() => navigateToFriendChat(item._id)}
+      onLongPress={() => {
+        setSelectedFriend(item);
+        setRemoveModalVisible(true);
+      }}
+      activeOpacity={0.7}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#161638',
+        borderRadius: 14,
+        padding: 14,
+        marginBottom: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(124, 58, 237, 0.08)',
+      }}
+    >
+      <View style={{
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        backgroundColor: getAvatarColor(item._id),
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 14,
+      }}>
+        <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>{getInitial(item.user_name)}</Text>
       </View>
-      {loading ? (
-        <View className="flex-1 justify-center items-center">
-          <ActivityIndicator size="large" color="#5B2EFF" />
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{item.user_name || 'Anonymous'}</Text>
+        <Text style={{ color: '#64648F', fontSize: 12, marginTop: 2 }}>Tap to chat</Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <TouchableOpacity
+          onPress={() => navigateToFriendChat(item._id)}
+          activeOpacity={0.7}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: 'rgba(124, 58, 237, 0.15)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <MessageCircle size={16} color="#7C3AED" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            setSelectedFriend(item);
+            setRemoveModalVisible(true);
+          }}
+          activeOpacity={0.7}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <UserX size={16} color="#EF4444" />
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderHeader = () => (
+    <>
+      {/* Pending Requests Section */}
+      {pendingRequests.length > 0 && (
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Clock size={16} color="#F59E0B" />
+            <Text style={{ color: '#F59E0B', fontSize: 13, fontWeight: '600', marginLeft: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Pending Requests ({pendingRequests.length})
+            </Text>
+          </View>
+          {pendingRequests.map((req) => (
+            <View key={req.fromUserId}>
+              {renderPendingRequest({ item: req })}
+            </View>
+          ))}
         </View>
-      ) : friends.length === 0 ? (
-        <View className="flex-1 justify-center items-center">
-          <Ionicons name="sad-outline" size={64} color="#5B2EFF" />
-          <Text className="text-white text-lg mt-4">No friends yet.</Text>
-          <Text className="text-gray-400 text-center mt-2">Start chatting and add friends to see them here!</Text>
+      )}
+
+      {/* Friends Section Header */}
+      {friends.length > 0 && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+          <Users size={16} color="#7C3AED" />
+          <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600', marginLeft: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Friends ({friends.length})
+          </Text>
+        </View>
+      )}
+    </>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#0F0F2D', paddingTop: 16 }}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{
+            backgroundColor: 'rgba(124, 58, 237, 0.15)',
+            width: 36,
+            height: 36,
+            borderRadius: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Users size={18} color="#7C3AED" />
+          </View>
+          <Text style={{ color: 'white', fontSize: 22, fontWeight: '700', marginLeft: 12 }}>Friends</Text>
+        </View>
+        {pendingRequests.length > 0 && (
+          <View style={{
+            backgroundColor: '#7C3AED',
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>{pendingRequests.length}</Text>
+          </View>
+        )}
+      </View>
+
+      {loading && friends.length === 0 ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#7C3AED" />
+        </View>
+      ) : friends.length === 0 && pendingRequests.length === 0 ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }}>
+          <View style={{
+            width: 80,
+            height: 80,
+            borderRadius: 40,
+            backgroundColor: 'rgba(124, 58, 237, 0.1)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 20,
+          }}>
+            <UserPlus size={36} color="#7C3AED" />
+          </View>
+          <Text style={{ color: 'white', fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8 }}>
+            No friends yet
+          </Text>
+          <Text style={{ color: '#8888AA', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+            Start random chats and send friend requests to build your friend list!
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.push('/(tabs)/home')}
+            activeOpacity={0.8}
+            style={{
+              backgroundColor: '#7C3AED',
+              paddingHorizontal: 24,
+              paddingVertical: 12,
+              borderRadius: 12,
+              marginTop: 24,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <MessageCircle size={16} color="white" />
+            <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Start Chatting</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
           data={friends}
           keyExtractor={(item) => item._id}
           renderItem={renderFriend}
-          contentContainerStyle={{ paddingBottom: 20 }}
+          ListHeaderComponent={renderHeader}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#7C3AED"
+              colors={['#7C3AED']}
+            />
+          }
         />
       )}
+
+      {/* Remove Friend Modal */}
       <Modal
         visible={isRemoveModalVisible}
         transparent
@@ -143,27 +385,69 @@ const Friends = () => {
           setSelectedFriend(null);
         }}
       >
-        <View className="flex-1 justify-center items-center bg-black/50 px-6">
-          <View className="bg-[#2E2E4D] rounded-xl p-6 w-full max-w-md">
-            <Text className="text-white text-lg font-semibold mb-3">Remove Friend</Text>
-            <Text className="text-gray-300 mb-5">
-              Are you sure you want to remove {selectedFriend?.user_name || 'this friend'}? You can add them again later.
+        <View style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          paddingHorizontal: 32,
+        }}>
+          <View style={{
+            backgroundColor: '#161638',
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 340,
+            borderWidth: 1,
+            borderColor: 'rgba(124, 58, 237, 0.15)',
+          }}>
+            <View style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'center',
+              marginBottom: 16,
+            }}>
+              <UserX size={22} color="#EF4444" />
+            </View>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+              Remove Friend?
             </Text>
-            <View className="flex-row justify-between">
+            <Text style={{ color: '#8888AA', fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
+              Remove <Text style={{ color: 'white', fontWeight: '600' }}>{selectedFriend?.user_name || 'this friend'}</Text>? You can add them again later.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 onPress={() => {
                   setRemoveModalVisible(false);
                   setSelectedFriend(null);
                 }}
-                className="bg-gray-500 py-2 px-4 rounded-xl flex-1 mr-2 items-center"
+                activeOpacity={0.7}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                }}
               >
-                <Text className="text-white font-medium">Cancel</Text>
+                <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => handleRemoveFriend(selectedFriend?._id || '')}
-                className="bg-red-600 py-2 px-4 rounded-xl flex-1 ml-2 items-center"
+                activeOpacity={0.7}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  backgroundColor: '#EF4444',
+                }}
               >
-                <Text className="text-white font-medium">Remove</Text>
+                <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Remove</Text>
               </TouchableOpacity>
             </View>
           </View>
